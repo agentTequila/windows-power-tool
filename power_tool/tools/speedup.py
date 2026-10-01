@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -175,6 +176,12 @@ def is_process_running(image: str) -> bool:
 
 def close_process(image: str) -> None:
     runner.run(["taskkill", "/IM", image, "/F"], timeout=30)
+    # taskkill returns before the process is fully gone from tasklist;
+    # wait so locked files are actually deletable by the time we clean.
+    for _ in range(20):
+        if not is_process_running(image):
+            return
+        time.sleep(0.25)
 
 
 class SpeedupFrame(ttk.Frame):

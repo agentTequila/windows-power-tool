@@ -196,6 +196,16 @@ class ProcessHelperTests(unittest.TestCase):
         fake_runner.run.return_value = Result(0, "INFO: No tasks are running.", "")
         self.assertFalse(speedup.is_process_running("chrome.exe"))
 
+    def test_close_process_waits_until_gone(self):
+        with patch.object(speedup, "runner") as fake_runner, \
+             patch.object(speedup, "is_process_running",
+                          side_effect=[True, True, False]) as fake_state, \
+             patch.object(speedup.time, "sleep") as fake_sleep:
+            speedup.close_process("firefox.exe")
+        fake_runner.run.assert_called_once()
+        self.assertEqual(fake_state.call_count, 3)
+        self.assertEqual(fake_sleep.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
