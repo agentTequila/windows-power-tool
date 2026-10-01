@@ -68,7 +68,8 @@ class BuildPsQueryTests(unittest.TestCase):
     def test_csv_script_uses_export_csv(self):
         script = log_collector.build_csv_script(
             ["System"], [2, 3], 15, Path(r"C:\out\events.csv"))
-        self.assertIn("Export-Csv", script)
+        self.assertIn("Export-Csv -Path", script)
+        self.assertNotIn("Export-Csv -FilePath", script)
         self.assertIn(r"C:\out\events.csv", script)
         self.assertIn("COLLECTED=", script)
 
@@ -124,8 +125,12 @@ class CollectTextCsvTests(unittest.TestCase):
     @patch.object(log_collector, "runner")
     def test_txt_collects_count(self, fake_runner):
         from power_tool.core.runner import Result
-        fake_runner.run_powershell.return_value = Result(0, "COLLECTED=7\n", "")
         with tempfile.TemporaryDirectory() as tmp:
+            def fake_powershell(script, timeout=600):
+                (Path(tmp) / "events.txt").write_text(
+                    "TimeCreated : ...", encoding="utf-8")
+                return Result(0, "COLLECTED=7\n", "")
+            fake_runner.run_powershell.side_effect = fake_powershell
             path, count, error = log_collector.collect_text_csv(
                 ["Application"], [1, 2, 3], 10, Path(tmp), "txt")
             self.assertEqual(path.name, "events.txt")
@@ -142,6 +147,17 @@ class CollectTextCsvTests(unittest.TestCase):
                 ["System"], [1], 10, Path(tmp), "csv")
         self.assertEqual(count, 0)
         self.assertIn("boom", error)
+
+    @patch.object(log_collector, "runner")
+    def test_reports_error_when_count_positive_but_file_empty(self, fake_runner):
+        from power_tool.core.runner import Result
+        fake_runner.run_powershell.return_value = Result(0, "COLLECTED=5\n", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            path, count, error = log_collector.collect_text_csv(
+                ["System"], [1], 10, Path(tmp), "csv")
+            self.assertEqual(count, 0)
+            self.assertIn("empty", error.lower())
+            self.assertEqual(path.stat().st_size, 0)
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ def build_text_script(logs, levels, minutes, out_path: Path) -> str:
 def build_csv_script(logs, levels, minutes, out_path: Path) -> str:
     return (build_ps_query(logs, levels, minutes)
             + "$events | Select-Object TimeCreated, Id, LevelDisplayName, "
-              f"ProviderName, LogName, Message | Export-Csv -FilePath '{out_path}' "
+              f"ProviderName, LogName, Message | Export-Csv -Path '{out_path}' "
               "-NoTypeInformation -Encoding UTF8; "
             + "Write-Output ('COLLECTED=' + $events.Count)")
 
@@ -100,7 +100,11 @@ def collect_text_csv(logs: Sequence[str], levels: Sequence[int], minutes: int,
     result = runner.run_powershell(script, timeout=600)
     if result.returncode != 0:
         return out_path, 0, result.stderr.strip() or result.stdout.strip()
-    return out_path, parse_count(result.stdout), ""
+    count = parse_count(result.stdout)
+    if count > 0 and out_path.stat().st_size == 0:
+        detail = result.stderr.strip() or "PowerShell reported no output"
+        return out_path, 0, f"output file is empty: {detail}"
+    return out_path, count, ""
 
 
 class LogCollectorFrame(ttk.Frame):
