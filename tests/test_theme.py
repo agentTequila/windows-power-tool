@@ -3,6 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import tkinter as tk
+from tkinter import ttk
+
 from power_tool.core import theme
 
 
@@ -54,6 +57,78 @@ class SettingsTests(unittest.TestCase):
     def test_save_unknown_name_raises(self):
         with self.assertRaises(ValueError):
             theme.save_theme_name("neon", self.path)
+
+
+class StyleAppearanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tk.Tk()
+        cls.root.withdraw()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def test_dark_hover_background_dark_with_light_text(self):
+        theme.apply_theme(self.root, "dark")
+        style = ttk.Style(self.root)
+        names = ("TCheckbutton", "TRadiobutton", "TButton",
+                 "Accent.TButton", "Danger.TButton")
+        for name in names:
+            with self.subTest(name):
+                bg = style.lookup(name, "background", ["active"])
+                fg = style.lookup(name, "foreground", ["active"])
+                self.assertNotEqual(bg, "#eeebe7")
+                self.assertNotEqual(bg, fg)
+
+    def test_checkbutton_hover_uses_panel2(self):
+        theme.apply_theme(self.root, "dark")
+        style = ttk.Style(self.root)
+        self.assertEqual(
+            style.lookup("TCheckbutton", "background", ["active"]),
+            theme.PALETTES["dark"]["panel2"])
+
+    def test_light_hover_background_light_with_dark_text(self):
+        theme.apply_theme(self.root, "light")
+        style = ttk.Style(self.root)
+        self.assertEqual(
+            style.lookup("TCheckbutton", "background", ["active"]),
+            theme.PALETTES["light"]["panel2"])
+        self.assertEqual(
+            style.lookup("TCheckbutton", "foreground", ["active"]),
+            theme.PALETTES["light"]["fg"])
+
+    def test_selected_sidebar_hover_stays_visible(self):
+        theme.apply_theme(self.root, "dark")
+        style = ttk.Style(self.root)
+        bg = style.lookup("Active.Sidebar.TButton", "background", ["active"])
+        fg = style.lookup("Active.Sidebar.TButton", "foreground", ["active"])
+        self.assertNotEqual(bg, "#eeebe7")
+        self.assertEqual(fg, theme.PALETTES["dark"]["accent_fg"])
+
+    def test_checkbutton_uses_tick_indicator_images(self):
+        theme.apply_theme(self.root, "dark")
+        style = ttk.Style(self.root)
+        mapped = dict(style.map("TCheckbutton").get("indicatorimage", []))
+        self.assertIn("selected", mapped)
+        self.assertIn("!selected", mapped)
+        images = getattr(self.root, "_wpt_check_images", None)
+        self.assertIsNotNone(images)
+        self.assertEqual(images["on"].width(), 13)
+
+        def pixel(img, x, y):
+            value = img.get(x, y)
+            if isinstance(value, tuple):
+                return tuple(int(c) for c in value)
+            return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
+
+        def rgb(hex_color):
+            return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+
+        self.assertEqual(pixel(images["on"], 4, 8),
+                         rgb(theme.PALETTES["dark"]["accent"]))
+        self.assertEqual(pixel(images["off"], 4, 8),
+                         rgb(theme.PALETTES["dark"]["entry_bg"]))
 
 
 if __name__ == "__main__":

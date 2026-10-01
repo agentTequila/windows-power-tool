@@ -60,6 +60,36 @@ def observe(cb: Callable[[dict], None]) -> None:
     _observers.append(cb)
 
 
+def _shade(hex_color: str, factor: float) -> str:
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    clamp = lambda v: max(0, min(255, int(v * factor)))
+    return "#%02x%02x%02x" % (clamp(r), clamp(g), clamp(b))
+
+
+def _draw_line(img: tk.PhotoImage, x0: int, y0: int, x1: int, y1: int,
+               color: str) -> None:
+    steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+    for i in range(steps + 1):
+        x = round(x0 + (x1 - x0) * i / steps)
+        y = round(y0 + (y1 - y0) * i / steps)
+        img.put(color, to=(x, y, min(x + 1, 12), min(y + 1, 12)))
+
+
+def _tick_images(p: dict) -> dict:
+    width = height = 13
+
+    def box() -> tk.PhotoImage:
+        img = tk.PhotoImage(width=width, height=height)
+        img.put(p["border"], to=(0, 0, width - 1, height - 1))
+        img.put(p["entry_bg"], to=(1, 1, width - 2, height - 2))
+        return img
+
+    on = box()
+    _draw_line(on, 3, 7, 5, 9, p["accent"])
+    _draw_line(on, 5, 9, 10, 4, p["accent"])
+    return {"on": on, "off": box()}
+
+
 def apply_theme(root: tk.Misc, name: str) -> dict:
     global _current
     palette = get_palette(name)
@@ -86,14 +116,30 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.configure("Error.TLabel", background=p["panel"], foreground=p["danger"])
     style.configure("Accent.TButton", background=p["accent"], foreground=p["accent_fg"],
                     padding=(12, 6))
-    style.map("Accent.TButton", foreground=[("disabled", p["dim"])])
+    style.map("Accent.TButton",
+              background=[("active", _shade(p["accent"], 0.85))],
+              foreground=[("active", p["accent_fg"]), ("disabled", p["dim"])])
     style.configure("Danger.TButton", background=p["danger"], foreground=p["accent_fg"],
                     padding=(12, 6))
-    style.map("Danger.TButton", foreground=[("disabled", p["dim"])])
+    style.map("Danger.TButton",
+              background=[("active", _shade(p["danger"], 0.85))],
+              foreground=[("active", p["accent_fg"]), ("disabled", p["dim"])])
     style.configure("TButton", padding=(10, 5))
+    style.map("TButton",
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["fg"]), ("disabled", p["dim"])])
+    check_images = _tick_images(p)
+    setattr(root, "_wpt_check_images", check_images)
     style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"])
-    style.map("TCheckbutton", foreground=[("disabled", p["dim"])])
+    style.map("TCheckbutton",
+              indicatorimage=[("selected", check_images["on"]),
+                              ("!selected", check_images["off"])],
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["fg"]), ("disabled", p["dim"])])
     style.configure("TRadiobutton", background=p["bg"], foreground=p["fg"])
+    style.map("TRadiobutton",
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["fg"]), ("disabled", p["dim"])])
     style.configure("TEntry", fieldbackground=p["entry_bg"], foreground=p["fg"])
     style.configure("TLabelframe", background=p["bg"], foreground=p["fg"],
                     bordercolor=p["border"])
@@ -108,6 +154,9 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.map("Sidebar.TButton", background=[("active", p["panel2"])])
     style.configure("Active.Sidebar.TButton", background=p["accent"],
                     foreground=p["accent_fg"], anchor="w", padding=(14, 8))
+    style.map("Active.Sidebar.TButton",
+              background=[("active", _shade(p["accent"], 0.85))],
+              foreground=[("active", p["accent_fg"])])
 
     for cb in list(_observers):
         try:
