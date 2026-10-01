@@ -27,6 +27,9 @@ class StatusPane(ttk.Frame):
     def set_error(self, text: str) -> None:
         self._show(text, "Error.TLabel")
 
+    def set_warn(self, text: str) -> None:
+        self._show(text, "Warn.TLabel")
+
 
 def confirm(parent, title: str, message: str) -> bool:
     return messagebox.askyesno(title, message, icon="warning", parent=parent)

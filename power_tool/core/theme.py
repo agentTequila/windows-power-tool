@@ -114,6 +114,7 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.configure("Working.TLabel", background=p["panel"], foreground=p["accent"])
     style.configure("Success.TLabel", background=p["panel"], foreground=p["success"])
     style.configure("Error.TLabel", background=p["panel"], foreground=p["danger"])
+    style.configure("Warn.TLabel", background=p["panel"], foreground=p["warn"])
     style.configure("Accent.TButton", background=p["accent"], foreground=p["accent_fg"],
                     padding=(12, 6))
     style.map("Accent.TButton",

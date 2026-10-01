@@ -35,6 +35,11 @@ class StatusPaneTests(unittest.TestCase):
         self.status.set_working("Crunching")
         self.assertEqual(self.status.text(), "Crunching")
 
+    def test_set_warn_updates_text_and_style(self):
+        self.status.set_warn("partial results")
+        self.assertEqual(self.status.text(), "partial results")
+        self.assertEqual(str(self.status._label.cget("style")), "Warn.TLabel")
+
 
 class GuardAdminTests(unittest.TestCase):
     @classmethod

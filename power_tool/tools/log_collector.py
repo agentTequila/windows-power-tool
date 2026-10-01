@@ -23,12 +23,19 @@ def parse_minutes(text: str) -> int:
     return minutes
 
 
-def build_xpath(levels: Sequence[int], minutes: int) -> str:
-    milliseconds = minutes * 60 * 1000
+def build_xpath(levels: Sequence[int], minutes: int,
+                now: datetime.datetime | None = None) -> str:
+    # timediff(@systemtime) matches nothing on current Windows builds, so
+    # compute an explicit UTC cutoff and use @SystemTime >= instead.
+    current = now or datetime.datetime.now(datetime.timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=datetime.timezone.utc)
+    cutoff = (current - datetime.timedelta(minutes=minutes)
+              ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     level_clause = ""
     if levels:
         level_clause = " and (" + " or ".join(f"Level={n}" for n in levels) + ")"
-    return (f"*[System[TimeCreated[timediff(@systemtime) <= {milliseconds}]"
+    return (f"*[System[TimeCreated[@SystemTime >= '{cutoff}']"
             f"{level_clause}]]")
 
 
@@ -70,6 +77,18 @@ def default_output_dir(base: Path, now: datetime.datetime | None = None) -> Path
     return Path(base) / f"Logs_{stamp}"
 
 
+def _probe_has_records(path: Path) -> bool:
+    """True unless the export is confirmed to contain zero records."""
+    escaped = str(path).replace("'", "''")
+    script = (f"$e = Get-WinEvent -Path '{escaped}' -MaxEvents 1 "
+              "-ErrorAction SilentlyContinue; "
+              "if ($null -eq $e) { 'COUNT=0' } else { 'COUNT=1' }")
+    result = runner.run_powershell(script, timeout=60)
+    if result.returncode != 0:
+        return True
+    return "COUNT=0" not in result.stdout
+
+
 def collect_evtx(logs: Sequence[str], levels: Sequence[int], minutes: int,
                  out_dir: Path) -> tuple[list[Path], list[str]]:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -80,11 +99,17 @@ def collect_evtx(logs: Sequence[str], levels: Sequence[int], minutes: int,
         dest = out_dir / f"{log}.evtx"
         result = runner.run(["wevtutil", "epl", log, str(dest), f"/q:{xpath}",
                              "/ow:true"], timeout=300)
-        if result.returncode == 0:
-            paths.append(dest)
-        else:
+        if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
             errors.append(f"{log}: {detail}")
+            continue
+        if not dest.exists():
+            errors.append(f"{log}: export produced no file")
+        elif _probe_has_records(dest):
+            paths.append(dest)
+        else:
+            dest.unlink(missing_ok=True)
+            errors.append(f"{log}: no events matched the time/level filter")
     return paths, errors
 
 
@@ -228,10 +253,21 @@ class LogCollectorFrame(ttk.Frame):
 
     def _on_done(self, result: dict) -> None:
         self._collect_button.configure(state="normal")
-        if result["errors"]:
-            self.status.set_error(" | ".join(result["errors"]))
-            return
+        errors = result["errors"]
+        notes = [e for e in errors if "no events matched" in e]
+        real = [e for e in errors if "no events matched" not in e]
         files = ", ".join(result["paths"])
+        if real:
+            self.status.set_error(" | ".join(real + notes))
+            return
+        if notes:
+            msg = " | ".join(notes)
+            if files:
+                msg += f" · exported: {files}"
+            else:
+                msg += " — widen the time frame or select more levels"
+            self.status.set_warn(msg)
+            return
         if result["count"] is None:
             self.status.set_success(f"EVTX export complete: {files}")
         else:

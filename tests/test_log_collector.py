@@ -33,20 +33,32 @@ class ParseMinutesTests(unittest.TestCase):
 
 
 class BuildXpathTests(unittest.TestCase):
-    def test_single_level(self):
-        xpath = log_collector.build_xpath([2], 10)
+    NOW = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    def test_single_level_uses_systemtime_cutoff(self):
+        xpath = log_collector.build_xpath([2], 10, now=self.NOW)
         self.assertEqual(
             xpath,
-            "*[System[TimeCreated[timediff(@systemtime) <= 600000] and (Level=2)]]")
+            "*[System[TimeCreated[@SystemTime >= '2026-01-01T11:50:00.000Z'] "
+            "and (Level=2)]]")
 
     def test_multiple_levels(self):
-        xpath = log_collector.build_xpath([1, 2, 3], 60)
-        self.assertIn("3600000", xpath)
+        xpath = log_collector.build_xpath([1, 2, 3], 60, now=self.NOW)
+        self.assertIn("'2026-01-01T11:00:00.000Z'", xpath)
         self.assertIn("(Level=1 or Level=2 or Level=3)", xpath)
 
-    def test_minutes_conversion(self):
-        xpath = log_collector.build_xpath([4], 1440)
-        self.assertIn("86400000", xpath)
+    def test_day_spanning_minutes(self):
+        xpath = log_collector.build_xpath([4], 1440, now=self.NOW)
+        self.assertIn("'2025-12-31T12:00:00.000Z'", xpath)
+
+    def test_no_level_clause_when_none_selected(self):
+        xpath = log_collector.build_xpath([], 10, now=self.NOW)
+        self.assertNotIn("Level", xpath)
+        self.assertIn("@SystemTime >=", xpath)
+
+    def test_contains_no_timediff(self):
+        xpath = log_collector.build_xpath([1, 2, 3], 60, now=self.NOW)
+        self.assertNotIn("timediff", xpath)
 
 
 class BuildPsQueryTests(unittest.TestCase):
@@ -91,10 +103,17 @@ class DefaultOutputDirTests(unittest.TestCase):
 
 
 class CollectEvtxTests(unittest.TestCase):
+    @staticmethod
+    def _export_ok(args, timeout=300):
+        from power_tool.core.runner import Result
+        Path(args[3]).write_bytes(b"evtx-bytes")
+        return Result(0, "", "")
+
     @patch.object(log_collector, "runner")
     def test_builds_wevtutil_command_per_log(self, fake_runner):
         from power_tool.core.runner import Result
-        fake_runner.run.return_value = Result(0, "", "")
+        fake_runner.run.side_effect = self._export_ok
+        fake_runner.run_powershell.return_value = Result(0, "COUNT=1", "")
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             paths, errors = log_collector.collect_evtx(
@@ -102,12 +121,12 @@ class CollectEvtxTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(paths), 2)
         self.assertEqual(paths[0].name, "Application.evtx")
-        calls = fake_runner.run.call_args_list
-        first_args = calls[0][0][0]
-        self.assertEqual(first_args[0], "wevtutil")
-        self.assertEqual(first_args[1], "epl")
+        epl_calls = [c[0][0] for c in fake_runner.run.call_args_list
+                     if c[0][0][:2] == ["wevtutil", "epl"]]
+        first_args = epl_calls[0]
         self.assertEqual(first_args[2], "Application")
         self.assertTrue(any(arg.startswith("/q:*[System") for arg in first_args))
+        self.assertIn("@SystemTime", first_args[4])
 
     @patch.object(log_collector, "runner")
     def test_collects_errors_from_failed_logs(self, fake_runner):
@@ -119,6 +138,52 @@ class CollectEvtxTests(unittest.TestCase):
         self.assertEqual(paths, [])
         self.assertEqual(len(errors), 1)
         self.assertIn("Access denied", errors[0])
+
+    @patch.object(log_collector, "runner")
+    def test_empty_export_deleted_and_reported(self, fake_runner):
+        from power_tool.core.runner import Result
+        fake_runner.run.side_effect = self._export_ok
+        fake_runner.run_powershell.return_value = Result(0, "COUNT=0", "")
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            paths, errors = log_collector.collect_evtx(["System"], [1], 10,
+                                                       out_dir)
+            self.assertEqual(paths, [])
+            self.assertEqual(len(errors), 1)
+            self.assertIn("no events matched", errors[0])
+            self.assertFalse((out_dir / "System.evtx").exists())
+
+    @patch.object(log_collector, "runner")
+    def test_probe_failure_keeps_exported_file(self, fake_runner):
+        from power_tool.core.runner import Result
+        fake_runner.run.side_effect = self._export_ok
+        fake_runner.run_powershell.return_value = Result(
+            1, "", "probe exploded")
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            paths, errors = log_collector.collect_evtx(["System"], [1], 10,
+                                                       out_dir)
+            self.assertEqual(errors, [])
+            self.assertEqual(len(paths), 1)
+            self.assertTrue((out_dir / "System.evtx").exists())
+
+    @patch.object(log_collector, "runner")
+    def test_mixed_logs_report_both_statuses(self, fake_runner):
+        from power_tool.core.runner import Result
+        fake_runner.run.side_effect = self._export_ok
+        fake_runner.run_powershell.side_effect = [
+            Result(0, "COUNT=0", ""),   # System: empty
+            Result(0, "COUNT=1", ""),   # Application: has records
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            paths, errors = log_collector.collect_evtx(
+                ["System", "Application"], [1], 10, out_dir)
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(paths[0].name, "Application.evtx")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("System", errors[0])
+        self.assertIn("no events matched", errors[0])
 
 
 class CollectTextCsvTests(unittest.TestCase):
