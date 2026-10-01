@@ -149,14 +149,22 @@ class SpeedupFrame(ttk.Frame):
         ).grid(row=1, column=0, sticky="w", pady=(6, 12))
 
         self._temp_var = tk.BooleanVar(value=True)
-        self._browser_var = tk.BooleanVar(value=True)
         self._bin_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(self, text="Temp files, Prefetch, Recent",
                         variable=self._temp_var).grid(row=2, column=0, sticky="w")
-        ttk.Checkbutton(self, text="Browser caches (Chrome, Edge, Firefox)",
-                        variable=self._browser_var).grid(row=3, column=0, sticky="w")
+
+        browsers_box = ttk.Labelframe(self, text="Browser caches", padding=8)
+        browsers_box.grid(row=3, column=0, sticky="w", pady=(8, 0))
+        self._browser_vars = {}
+        for name in ("Chrome", "Edge", "Firefox"):
+            var = tk.BooleanVar(value=True)
+            self._browser_vars[name] = var
+            ttk.Checkbutton(browsers_box, text=name, variable=var).pack(
+                side="left", padx=(0, 12))
+
         ttk.Checkbutton(self, text="Recycle Bin",
-                        variable=self._bin_var).grid(row=4, column=0, sticky="w")
+                        variable=self._bin_var).grid(row=4, column=0, sticky="w",
+                                                     pady=(8, 0))
 
         self._run_button = ttk.Button(self, text="Run Cleanup",
                                       style="Accent.TButton", command=self._run)
@@ -170,6 +178,17 @@ class SpeedupFrame(ttk.Frame):
         self._task = None
         self._busy = False
 
+    def _selected_browsers(self) -> list[str]:
+        return [name for name, var in self._browser_vars.items() if var.get()]
+
+    def _gather_targets(self, env: dict) -> list:
+        targets = []
+        if self._temp_var.get():
+            targets.extend(default_temp_targets(env))
+        for browser in self._selected_browsers():
+            targets.extend(browser_cleanup_targets(browser, env))
+        return targets
+
     def _run(self) -> None:
         if self._busy:
             return
@@ -178,13 +197,8 @@ class SpeedupFrame(ttk.Frame):
         self._busy = True
         self._run_button.state(["disabled"])
         self.status.set_working("Cleaning up...")
-        targets = []
         env = dict(os.environ)
-        if self._temp_var.get():
-            targets.extend(default_temp_targets(env))
-        if self._browser_var.get():
-            for browser in ("Chrome", "Edge", "Firefox"):
-                targets.extend(browser_cleanup_targets(browser, env))
+        targets = self._gather_targets(env)
         self._task = tasks.BackgroundTask(
             self, lambda: self._cleanup(targets),
             self._on_done, self._on_error)
@@ -216,16 +230,22 @@ class SpeedupFrame(ttk.Frame):
         self.status.set_error(f"Cleanup failed: {exc}")
 
     def _restart_browsers(self) -> None:
-        for browser, name in (("Chrome", "chrome.exe"), ("Edge", "msedge.exe"),
-                              ("Firefox", "firefox.exe")):
-            if is_process_running(name):
-                runner.run(["taskkill", "/IM", name, "/F"])
-        for browser in ("Chrome", "Edge", "Firefox"):
+        selected = self._selected_browsers()
+        if not selected:
+            self.status.set_error("Select at least one browser first.")
+            return
+        names = {"Chrome": "chrome.exe", "Edge": "msedge.exe",
+                 "Firefox": "firefox.exe"}
+        for browser in selected:
+            exe = names[browser]
+            if is_process_running(exe):
+                runner.run(["taskkill", "/IM", exe, "/F"])
+        for browser in selected:
             cmd = browser_launch_command(browser, dict(os.environ))
             if cmd:
                 runner.start_detached(cmd)
-                break
-        self.status.set_success("Browsers restarted.")
+        self.status.set_success(
+            f"Browsers restarted: {', '.join(selected)}.")
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:
