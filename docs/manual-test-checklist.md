@@ -24,6 +24,9 @@ Run `python run.py` as a normal user (UAC should prompt). Check every box.
 - [ ] Clean Temp Data → green summary with items removed, MB freed, skipped count
 - [ ] Prefetch/Temp/Recent actually emptied (spot-check C:\Windows\Temp)
 - [ ] Locked file (e.g. open a file in %TEMP%) is counted as skipped, no error
+- [ ] A folder containing one locked file still gets its OTHER files removed
+- [ ] With Firefox/Chrome checked + running: browser closes BEFORE temp cleaning
+      (files it held open are deleted), then reopens after
 - [ ] Browsers are unchecked by default; each browser selectable individually
 - [ ] With Chrome checked + running: Chrome closes during cleanup, then reopens
 - [ ] Only checked browsers are touched; others stay running
@@ -40,7 +43,9 @@ Run `python run.py` as a normal user (UAC should prompt). Check every box.
 - [ ] Minutes = "abc" → red validation error, nothing runs
 - [ ] Text over 10 min → events.txt produced, green count message
 - [ ] CSV over 10 min → events.csv opens in Excel with expected columns
-- [ ] EVTX → Application.evtx opens in Event Viewer
+- [ ] EVTX → .evtx with real records, opens in Event Viewer with events visible
+- [ ] EVTX with a window that matches nothing (e.g. 5 min + error levels only)
+      → amber "no events matched" warning, NO empty .evtx left on disk
 - [ ] Empty output (0 events) is reported honestly, not fake-success
 - [ ] Preset buttons 10/30/60/1440 fill the minutes box
 - [ ] Browse changes the destination folder
