@@ -53,6 +53,27 @@ class ClearDirectoryTests(unittest.TestCase):
         self.assertEqual(skipped, 1)
         self.assertTrue((self.path / "locked.txt").exists())
 
+    def test_locked_file_inside_subdir_salvages_the_rest(self):
+        sub = self.path / "sub"
+        sub.mkdir()
+        (sub / "keep.txt").write_text("k" * 40, encoding="utf-8")
+        (sub / "lock.txt").write_text("l" * 10, encoding="utf-8")
+        original_unlink = Path.unlink
+
+        def picky_unlink(path_self, *args, **kwargs):
+            if path_self.name == "lock.txt":
+                raise PermissionError("in use")
+            return original_unlink(path_self, *args, **kwargs)
+
+        with patch("power_tool.tools.speedup.shutil.rmtree",
+                   side_effect=PermissionError("in use")), \
+             patch.object(Path, "unlink", autospec=True,
+                          side_effect=picky_unlink):
+            removed, freed, skipped = speedup.clear_directory(self.path)
+        self.assertEqual((removed, freed, skipped), (1, 40, 1))
+        self.assertFalse((sub / "keep.txt").exists())
+        self.assertTrue((sub / "lock.txt").exists())
+
 
 class ChromiumProfilesTests(unittest.TestCase):
     def test_only_dirs_with_preferences_count(self):

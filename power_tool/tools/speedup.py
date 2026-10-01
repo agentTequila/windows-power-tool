@@ -29,6 +29,39 @@ def default_temp_targets(env: Mapping[str, str]) -> list[Path]:
     ]
 
 
+def _salvage_directory(item: Path) -> tuple[int, int, int]:
+    """Best-effort recursive delete used when rmtree hits a locked file.
+
+    Removes every file it can and each directory that ends up empty;
+    locked files and the directories still holding them are skipped.
+    """
+    removed = freed = skipped = 0
+
+    def onerror(_err: OSError) -> None:
+        nonlocal skipped
+        skipped += 1
+
+    for root, _dirs, files in os.walk(item, topdown=False, onerror=onerror):
+        directory = Path(root)
+        for name in files:
+            target = directory / name
+            try:
+                size = target.stat().st_size
+                target.unlink()
+            except OSError:
+                skipped += 1
+            else:
+                removed += 1
+                freed += size
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+        else:
+            removed += 1
+    return removed, freed, skipped
+
+
 def clear_directory(path: Path) -> tuple[int, int, int]:
     removed = freed = skipped = 0
     if not path.exists():
@@ -48,7 +81,13 @@ def clear_directory(path: Path) -> tuple[int, int, int]:
             removed += 1
             freed += size
         except OSError:
-            skipped += 1
+            if entry.is_dir() and not entry.is_symlink():
+                r, f, s = _salvage_directory(entry)
+                removed += r
+                freed += f
+                skipped += s
+            else:
+                skipped += 1
     return removed, freed, skipped
 
 
@@ -212,6 +251,14 @@ class SpeedupFrame(ttk.Frame):
 
     def _work(self, browsers: list[str], clear_recycle: bool) -> dict:
         env = dict(os.environ)
+        # Close selected browsers first so files they hold open (temp
+        # downloads, session files) are actually deletable below.
+        was_running: dict[str, bool] = {}
+        for browser in browsers:
+            image = BROWSER_PROCESSES[browser]
+            was_running[browser] = is_process_running(image)
+            if was_running[browser]:
+                close_process(image)
         removed = freed = skipped = 0
         for target in default_temp_targets(env):
             r, f, s = clear_directory(target)
@@ -220,17 +267,13 @@ class SpeedupFrame(ttk.Frame):
             skipped += s
         cleaned_browsers = []
         for browser in browsers:
-            image = BROWSER_PROCESSES[browser]
-            was_running = is_process_running(image)
-            if was_running:
-                close_process(image)
             for target in browser_cleanup_targets(browser, env):
                 did_remove, size = remove_target(target)
                 if did_remove:
                     removed += 1
                     freed += size
             cleaned_browsers.append(browser)
-            if was_running:
+            if was_running[browser]:
                 command = browser_launch_command(browser, env)
                 if command:
                     try:

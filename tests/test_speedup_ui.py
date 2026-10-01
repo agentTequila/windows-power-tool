@@ -85,6 +85,30 @@ class WorkFlowTests(FrameSetupMixin, unittest.TestCase):
         self.assertIn("Clear-RecycleBin",
                       fake_runner.run_powershell.call_args[0][0])
 
+    @patch.object(speedup, "browser_launch_command",
+                  return_value=["C:\\firefox.exe"])
+    @patch.object(speedup, "browser_cleanup_targets",
+                  return_value=[Path("cache-entry")])
+    @patch.object(speedup, "runner")
+    def test_work_closes_browsers_before_cleaning_anything(
+            self, fake_runner, fake_targets, fake_launch):
+        fake_runner.run.side_effect = [
+            runner.Result(0, "firefox.exe", ""),  # tasklist: running
+            runner.Result(0, "", ""),             # taskkill
+        ]
+        order: list[str] = []
+        with patch.object(speedup, "is_process_running", return_value=True), \
+             patch.object(speedup, "close_process",
+                          side_effect=lambda img: order.append("close")), \
+             patch.object(speedup, "clear_directory",
+                          side_effect=lambda p: order.append("temp") or (0, 0, 0)), \
+             patch.object(speedup, "remove_target",
+                          side_effect=lambda p: order.append("cache") or (True, 1)):
+            self.frame._work(["Firefox"], clear_recycle=False)
+        work = [step for step in order if step in ("close", "temp", "cache")]
+        self.assertEqual(
+            work, ["close", "temp", "temp", "temp", "temp", "cache"])
+
 
 class RebootFlowTests(FrameSetupMixin, unittest.TestCase):
     @patch.object(speedup, "runner")
