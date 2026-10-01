@@ -1,0 +1,2 @@
+# Dev/build dependency only — the app itself uses only the Python standard library.
+pyinstaller>=6.0
