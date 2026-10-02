@@ -5,14 +5,17 @@ from unittest.mock import patch
 
 import tkinter as tk
 
-from power_tool.core import theme
+from power_tool.core import theme, widgets
 from power_tool.tools import installed_apps
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 
 class FakeKey:
-    def __init__(self, children=(), values=None):
+    def __init__(self, children=(), values=None, open_error=False):
         self.children = list(children)
         self.values = values or {}
+        self.open_error = open_error
 
     def __enter__(self):
         return self
@@ -33,7 +36,10 @@ class FakeWinreg:
 
     def OpenKey(self, hive, path, reserved=0, access=0):
         if isinstance(hive, FakeKey):
-            return hive.children[int(path)]
+            child = hive.children[int(path)]
+            if child.open_error:
+                raise OSError(f"cannot open {path}")
+            return child
         view = access & (self.KEY_WOW64_64KEY | self.KEY_WOW64_32KEY)
         key = self.root_keys.get((hive, path, view))
         if key is None:
@@ -117,6 +123,17 @@ class GatherAppsTests(unittest.TestCase):
         fake = FakeWinreg({})
         with patch.object(installed_apps, "winreg", fake):
             self.assertEqual(installed_apps.gather_apps(), [])
+
+    def test_one_broken_subkey_skips_row_not_whole_listing(self):
+        fake = make_fake_reg()
+        hkcu = fake.root_keys[(FakeWinreg.HKEY_CURRENT_USER,
+                               installed_apps.UNINSTALL_PATH, 0x100)]
+        hkcu.children.append(FakeKey(values={"DisplayName": "Racy App"},
+                                     open_error=True))
+        with patch.object(installed_apps, "winreg", fake):
+            apps = installed_apps.gather_apps()
+        names = [a["name"] for a in apps]
+        self.assertEqual(names, ["32-bit Tool", "Firefox", "User App"])
 
 
 class FormatTests(unittest.TestCase):
@@ -277,6 +294,46 @@ class InstalledAppsFrameTests(unittest.TestCase):
             self.frame._export()
         fake.assert_not_called()
         self.assertIn("Nothing to export", self.frame.status.text())
+
+    def test_clearing_search_restores_total_count_status(self):
+        self._load()
+        self.frame._query.set("fire")
+        self.assertEqual(self.frame.status.text(), "1 of 3 apps match")
+        self.frame._query.set("")
+        self.assertEqual(self.frame.status.text(), "3 apps found.")
+
+    def test_refresh_disables_buttons_and_error_reenables(self):
+        self.frame._refresh()
+        for button in (self.frame._refresh_button,
+                       self.frame._export_button,
+                       self.frame._uninstall_button):
+            self.assertEqual(str(button.cget("state")), "disabled")
+        kwargs = self.fake_task.call_args.kwargs
+        kwargs["on_error"](RuntimeError("boom"))
+        for button in (self.frame._refresh_button,
+                       self.frame._export_button,
+                       self.frame._uninstall_button):
+            self.assertEqual(str(button.cget("state")), "normal")
+        self.assertIn("boom", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_action_guarded_requires_admin(self):
+        self._load()
+        self.frame._tree.selection_set("0")
+        self.fake_task.reset_mock()
+        with patch.object(installed_apps.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             patch.object(installed_apps.widgets, "confirm",
+                          return_value=True), \
+             patch.object(installed_apps.runner,
+                          "start_detached") as fake_start:
+            self.frame._uninstall()
+        self.fake_task.assert_not_called()
+        fake_start.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":

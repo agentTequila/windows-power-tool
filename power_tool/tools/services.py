@@ -161,6 +161,7 @@ class ServicesFrame(ttk.Frame):
 
     def _load_error(self, exc: BaseException) -> None:
         self._set_busy(False)
+        self._pending_success = None
         self.status.set_error(f"Loading services failed: {exc}")
 
     def _refilter(self) -> None:
@@ -174,6 +175,8 @@ class ServicesFrame(ttk.Frame):
         if self._query.get().strip():
             self.status.set_idle(
                 f"{len(self._visible)} of {len(self._all)} match")
+        else:
+            self.status.set_success(f"{len(self._all)} services loaded.")
 
     def _selected_name(self) -> str | None:
         selection = self._tree.selection()

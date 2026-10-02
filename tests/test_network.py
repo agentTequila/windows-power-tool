@@ -3,8 +3,10 @@ from unittest.mock import patch
 
 import tkinter as tk
 
-from power_tool.core import runner, theme
+from power_tool.core import runner, theme, widgets
 from power_tool.tools import network
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 
 class PingArgsTests(unittest.TestCase):
@@ -145,6 +147,16 @@ class NetworkFrameTests(unittest.TestCase):
         fake_task.return_value.start.assert_called_once()
         self.assertEqual(fake_task.call_args.kwargs["work"].args[0],
                          [["ping", "-n", "4", "8.8.8.8"]])
+
+    @patch.object(network.tasks, "BackgroundTask")
+    def test_action_guarded_requires_admin(self, fake_task):
+        with patch.object(network.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False):
+            self.frame._action("Flush DNS")
+        fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":

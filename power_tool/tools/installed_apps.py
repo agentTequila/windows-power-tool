@@ -39,7 +39,12 @@ def gather_apps() -> list[dict]:
         with root:
             count = winreg.QueryInfoKey(root)[0]
             for index in range(count):
-                with winreg.OpenKey(root, winreg.EnumKey(root, index)) as sub:
+                try:
+                    sub = winreg.OpenKey(
+                        root, winreg.EnumKey(root, index))
+                except OSError:
+                    continue
+                with sub:
                     name = _get(sub, "DisplayName")
                     if not name:
                         continue
@@ -205,6 +210,8 @@ class InstalledAppsFrame(ttk.Frame):
         if self._query.get().strip():
             self.status.set_idle(
                 f"{len(self._visible)} of {len(self._all_apps)} apps match")
+        else:
+            self.status.set_success(f"{len(self._all_apps)} apps found.")
 
     def _selected_app(self) -> dict | None:
         selection = self._tree.selection()

@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 import tkinter as tk
 
-from power_tool.core import theme
+from power_tool.core import theme, widgets
 from power_tool.tools import processes
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 FIXTURE = [
     {"name": "chrome", "pid": 100, "cpu": 1.5, "ram": 52428800,
@@ -166,6 +168,47 @@ class ProcessesFrameTests(unittest.TestCase):
         kwargs = self.fake_task.call_args.kwargs
         kwargs["on_error"](RuntimeError("Access is denied"))
         self.assertIn("Access is denied", self.frame.status.text())
+
+    def test_load_error_clears_pending_success_prefix(self):
+        self.frame._action_done("Process 100 ended.")
+        self.frame._load_error(RuntimeError("boom"))
+        self._load()
+        self.assertEqual(self.frame.status.text(), "2 processes running.")
+
+    def test_clearing_search_restores_total_count_status(self):
+        self._load()
+        self.frame._query.set("note")
+        self.assertEqual(self.frame.status.text(), "1 of 2 match")
+        self.frame._query.set("")
+        self.assertEqual(self.frame.status.text(), "2 processes running.")
+
+    def test_refresh_disables_buttons_and_error_reenables(self):
+        self.frame._refresh()
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "disabled")
+        self.assertEqual(str(self.frame._end_button.cget("state")),
+                         "disabled")
+        kwargs = self.fake_task.call_args.kwargs
+        kwargs["on_error"](RuntimeError("boom"))
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "normal")
+        self.assertEqual(str(self.frame._end_button.cget("state")),
+                         "normal")
+        self.assertIn("boom", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_action_guarded_requires_admin(self):
+        self._load()
+        self.frame._tree.selection_set("0")
+        with patch.object(processes.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             patch.object(processes.widgets, "confirm", return_value=True):
+            self.frame._end_process()
+        self.fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":

@@ -159,6 +159,7 @@ class UsersGroupsFrame(ttk.Frame):
             on_error=self._load_error).start()
 
     def _load_done(self, data: dict) -> None:
+        self._set_busy(False)
         self._users = data["users"]
         for iid in self._tree.get_children():
             self._tree.delete(iid)
@@ -166,7 +167,7 @@ class UsersGroupsFrame(ttk.Frame):
             groups = ", ".join(user.get("groups") or []) or "-"
             enabled = "Yes" if user.get("enabled") else "No"
             self._tree.insert("", "end", iid=str(index), values=(
-                user.get("name", ""), user.get("full", ""), enabled,
+                user.get("name", ""), user.get("full") or "", enabled,
                 groups))
         group_names = sorted({
             str(g.get("name", "")) for g in data["groups"]
@@ -177,7 +178,6 @@ class UsersGroupsFrame(ttk.Frame):
         self._group_combo.configure(values=values)
         if values and self._group_combo.get() not in values:
             self._group_combo.set(values[0])
-        self._set_busy(False)
         prefix = ""
         if self._pending_success:
             prefix = f"{self._pending_success} "
@@ -187,6 +187,7 @@ class UsersGroupsFrame(ttk.Frame):
 
     def _load_error(self, exc: BaseException) -> None:
         self._set_busy(False)
+        self._pending_success = None
         self.status.set_error(f"Loading users failed: {exc}")
 
     def _selected_user(self) -> str | None:

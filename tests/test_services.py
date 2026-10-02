@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 import tkinter as tk
 
-from power_tool.core import theme
+from power_tool.core import theme, widgets
 from power_tool.tools import services
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 FIXTURE = [
     {"name": "Spooler", "display": "Print Spooler", "status": "Running",
@@ -194,6 +196,47 @@ class ServicesFrameTests(unittest.TestCase):
         kwargs = self.fake_task.call_args.kwargs
         kwargs["on_error"](RuntimeError("Cannot open service"))
         self.assertIn("Cannot open service", self.frame.status.text())
+
+    def test_load_error_clears_pending_success_prefix(self):
+        self.frame._action_done("Spooler stopped.")
+        self.frame._load_error(RuntimeError("boom"))
+        self._load()
+        self.assertEqual(self.frame.status.text(), "2 services loaded.")
+
+    def test_clearing_search_restores_total_count_status(self):
+        self._load()
+        self.frame._query.set("update")
+        self.assertEqual(self.frame.status.text(), "1 of 2 match")
+        self.frame._query.set("")
+        self.assertEqual(self.frame.status.text(), "2 services loaded.")
+
+    def test_refresh_disables_buttons_and_error_reenables(self):
+        self.frame._refresh()
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "disabled")
+        for button in self.frame._action_buttons:
+            self.assertEqual(str(button.cget("state")), "disabled")
+        kwargs = self.fake_task.call_args.kwargs
+        kwargs["on_error"](RuntimeError("boom"))
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "normal")
+        for button in self.frame._action_buttons:
+            self.assertEqual(str(button.cget("state")), "normal")
+        self.assertIn("boom", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_action_guarded_requires_admin(self):
+        self._load()
+        self.frame._tree.selection_set("0")
+        with patch.object(services.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             patch.object(services.widgets, "confirm", return_value=True):
+            self.frame._stop()
+        self.fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":

@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 import tkinter as tk
 
-from power_tool.core import theme
+from power_tool.core import theme, widgets
 from power_tool.tools import users_groups
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 FIXTURE = {
     "users": [
@@ -247,6 +249,73 @@ class UsersGroupsFrameTests(unittest.TestCase):
         kwargs = self.fake_task.call_args.kwargs
         kwargs["on_error"](RuntimeError("Access denied"))
         self.assertIn("Access denied", self.frame.status.text())
+
+    def test_load_error_clears_pending_success_prefix(self):
+        self.frame._action_done("Added admin to Administrators.")
+        self.frame._load_error(RuntimeError("boom"))
+        self._load()
+        self.assertEqual(self.frame.status.text(),
+                         "2 users, 3 groups loaded.")
+
+    def test_load_done_reenables_before_populating_tree(self):
+        self._load()
+        calls = []
+        real_set_busy = self.frame._set_busy
+        real_delete = self.frame._tree.delete
+        real_insert = self.frame._tree.insert
+
+        def set_busy(busy):
+            calls.append("set_busy")
+            real_set_busy(busy)
+
+        def delete(iid):
+            calls.append("delete")
+            return real_delete(iid)
+
+        def insert(*args, **kwargs):
+            calls.append("insert")
+            return real_insert(*args, **kwargs)
+
+        self.frame._set_busy = set_busy
+        self.frame._tree.delete = delete
+        self.frame._tree.insert = insert
+        self._load()
+        self.assertEqual(calls[0], "set_busy")
+
+    def test_load_done_null_full_name_renders_blank(self):
+        data = json.loads(json.dumps(FIXTURE))
+        data["users"][0]["full"] = None
+        self._load(data)
+        values = self.frame._tree.item("0", "values")
+        self.assertEqual(values[1], "")
+
+    def test_refresh_disables_buttons_and_error_reenables(self):
+        self.frame._refresh()
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "disabled")
+        for button in self.frame._action_buttons:
+            self.assertEqual(str(button.cget("state")), "disabled")
+        kwargs = self.fake_task.call_args.kwargs
+        kwargs["on_error"](RuntimeError("boom"))
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "normal")
+        for button in self.frame._action_buttons:
+            self.assertEqual(str(button.cget("state")), "normal")
+        self.assertIn("boom", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_action_guarded_requires_admin(self):
+        self._load()
+        self.frame._tree.selection_set("0")
+        self.frame._group_combo.set("Administrators")
+        with patch.object(users_groups.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False):
+            self.frame._add_to_group()
+        self.fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":
