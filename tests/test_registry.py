@@ -12,6 +12,7 @@ EXPECTED_KEYS = [
 EXPECTED_ADMIN = [
     "power_tool.tools.network",
     "power_tool.tools.installed_apps",
+    "power_tool.tools.users_groups",
 ]
 
 

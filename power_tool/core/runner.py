@@ -38,3 +38,16 @@ def run_powershell(script: str, timeout: int = 300) -> Result:
 def start_detached(args: Sequence[str]) -> int:
     proc = subprocess.Popen(list(args))
     return proc.pid
+
+
+def ps_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def run_powershell_checked(script: str, timeout: int = 60) -> str:
+    result = run_powershell(script, timeout=timeout)
+    if result.returncode != 0:
+        detail = (result.stderr.strip() or result.stdout.strip()
+                  or f"exit code {result.returncode}")
+        raise RuntimeError(f"PowerShell failed: {detail}")
+    return result.stdout

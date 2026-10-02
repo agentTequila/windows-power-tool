@@ -1,5 +1,5 @@
 from power_tool.tools import (installed_apps, log_collector, network,
-                              speedup, system_info, usb_guard)
+                              speedup, system_info, usb_guard, users_groups)
 
 REGISTRY: list = [
     ("Core", [
@@ -11,5 +11,6 @@ REGISTRY: list = [
     ("Admin", [
         ("Network", network),
         ("Installed Apps", installed_apps),
+        ("Users & Groups", users_groups),
     ]),
 ]
