@@ -14,6 +14,7 @@ EXPECTED_ADMIN = [
     "power_tool.tools.installed_apps",
     "power_tool.tools.users_groups",
     "power_tool.tools.processes",
+    "power_tool.tools.services",
 ]
 
 
@@ -38,6 +39,12 @@ class RegistryTests(unittest.TestCase):
         labels = [label for _, modules in REGISTRY for label, _ in modules]
         self.assertIn("USB Guard", labels)
         self.assertIn("Log Collector", labels)
+
+    def test_admin_labels_are_human_readable(self):
+        labels = [label for label, _ in REGISTRY[1][1]]
+        self.assertEqual(labels, ["Network", "Installed Apps",
+                                  "Users & Groups", "Processes",
+                                  "Services"])
 
 
 if __name__ == "__main__":
