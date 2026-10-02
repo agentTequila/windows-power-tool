@@ -17,6 +17,10 @@ EXPECTED_ADMIN = [
     "power_tool.tools.services",
 ]
 
+EXPECTED_SYSTEM = [
+    "power_tool.tools.disk_cleanup",
+]
+
 
 class RegistryTests(unittest.TestCase):
     def test_core_group_lists_four_tools_in_order(self):
@@ -45,6 +49,15 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(labels, ["Network", "Installed Apps",
                                   "Users & Groups", "Processes",
                                   "Services"])
+
+    def test_system_group_lists_tools_in_order(self):
+        self.assertEqual(REGISTRY[2][0], "System")
+        keys = [module.__name__ for _, module in REGISTRY[2][1]]
+        self.assertEqual(keys, EXPECTED_SYSTEM)
+
+    def test_system_labels_are_human_readable(self):
+        labels = [label for label, _ in REGISTRY[2][1]]
+        self.assertEqual(labels, ["Disk & Cleanup"])
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
-from power_tool.tools import (installed_apps, log_collector, network,
-                              processes, services, speedup, system_info,
-                              usb_guard, users_groups)
+from power_tool.tools import (disk_cleanup, installed_apps, log_collector,
+                              network, processes, services, speedup,
+                              system_info, usb_guard, users_groups)
 
 REGISTRY: list = [
     ("Core", [
@@ -15,5 +15,8 @@ REGISTRY: list = [
         ("Users & Groups", users_groups),
         ("Processes", processes),
         ("Services", services),
+    ]),
+    ("System", [
+        ("Disk & Cleanup", disk_cleanup),
     ]),
 ]
