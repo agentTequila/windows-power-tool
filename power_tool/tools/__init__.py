@@ -1,4 +1,4 @@
-from power_tool.tools import log_collector, speedup, system_info, usb_guard
+from power_tool.tools import log_collector, network, speedup, system_info, usb_guard
 
 REGISTRY: list = [
     ("Core", [
@@ -6,5 +6,8 @@ REGISTRY: list = [
         ("Windows Speedup", speedup),
         ("Log Collector", log_collector),
         ("System Info", system_info),
+    ]),
+    ("Admin", [
+        ("Network", network),
     ]),
 ]
