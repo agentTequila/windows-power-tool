@@ -230,7 +230,11 @@ class InstalledAppsFrame(ttk.Frame):
                 "This app has no uninstall command — remove it from "
                 "Windows Settings instead.")
             return
-        runner.start_detached(command)
+        try:
+            runner.start_detached(command)
+        except OSError as exc:
+            self.status.set_error(f"Could not start uninstaller: {exc}")
+            return
         self.status.set_success(
             f"Uninstaller started for {app['name']}. Follow its prompts.")
 

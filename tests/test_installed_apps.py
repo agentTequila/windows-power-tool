@@ -245,6 +245,17 @@ class InstalledAppsFrameTests(unittest.TestCase):
         fake.assert_called_once_with(["MsiExec.exe", "/X{ABC}"])
         self.assertIn("Uninstaller started", self.frame.status.text())
 
+    def test_uninstall_launch_failure_shown_as_status_error(self):
+        self._load()
+        self.frame._tree.selection_set("1")
+        with patch.object(installed_apps.widgets, "confirm",
+                          return_value=True), \
+             patch.object(installed_apps.runner, "start_detached",
+                          side_effect=FileNotFoundError("gone.exe")):
+            self.frame._uninstall()
+        self.assertIn("Could not start uninstaller",
+                      self.frame.status.text())
+
     def test_export_writes_visible_rows(self):
         self._load()
         tmp = tempfile.TemporaryDirectory()
