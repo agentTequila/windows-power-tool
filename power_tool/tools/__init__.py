@@ -1,6 +1,6 @@
 from power_tool.tools import (disk_cleanup, installed_apps, log_collector,
-                              network, processes, services, speedup,
-                              system_info, usb_guard, users_groups)
+                              network, processes, restore_point, services,
+                              speedup, system_info, usb_guard, users_groups)
 
 REGISTRY: list = [
     ("Core", [
@@ -18,5 +18,6 @@ REGISTRY: list = [
     ]),
     ("System", [
         ("Disk & Cleanup", disk_cleanup),
+        ("Restore Point", restore_point),
     ]),
 ]

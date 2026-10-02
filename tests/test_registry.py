@@ -19,6 +19,7 @@ EXPECTED_ADMIN = [
 
 EXPECTED_SYSTEM = [
     "power_tool.tools.disk_cleanup",
+    "power_tool.tools.restore_point",
 ]
 
 
@@ -57,7 +58,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_system_labels_are_human_readable(self):
         labels = [label for label, _ in REGISTRY[2][1]]
-        self.assertEqual(labels, ["Disk & Cleanup"])
+        self.assertEqual(labels, ["Disk & Cleanup", "Restore Point"])
 
 
 if __name__ == "__main__":
