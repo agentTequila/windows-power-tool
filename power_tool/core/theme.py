@@ -90,6 +90,32 @@ def _tick_images(p: dict) -> dict:
     return {"on": on, "off": box()}
 
 
+def _apply_tick_indicator(style: ttk.Style, root: tk.Misc, name: str,
+                          p: dict) -> None:
+    element = f"wpt.tick.{name}"
+    images = _tick_images(p)
+    cache = getattr(root, "_wpt_check_images", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        root._wpt_check_images = cache
+    cache[name] = images
+    if element not in style.element_names():
+        style.element_create(
+            element, "image", images["off"],
+            ("selected", images["on"]),
+            ("pressed", images["on"]),
+            ("alternate", images["off"]),
+            ("disabled", images["off"]),
+            ("active", images["off"]))
+    style.layout("TCheckbutton", [
+        ("Checkbutton.padding", {"sticky": "nswe", "children": [
+            (element, {"side": "left", "sticky": ""}),
+            ("Checkbutton.focus", {"side": "left", "sticky": "w",
+                                   "children": [
+                                       ("Checkbutton.label",
+                                        {"sticky": "nswe"})]})]})])
+
+
 def apply_theme(root: tk.Misc, name: str) -> dict:
     global _current
     palette = get_palette(name)
@@ -129,14 +155,11 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.map("TButton",
               background=[("active", p["panel2"])],
               foreground=[("active", p["fg"]), ("disabled", p["dim"])])
-    check_images = _tick_images(p)
-    setattr(root, "_wpt_check_images", check_images)
     style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"])
     style.map("TCheckbutton",
-              indicatorimage=[("selected", check_images["on"]),
-                              ("!selected", check_images["off"])],
               background=[("active", p["panel2"])],
               foreground=[("active", p["fg"]), ("disabled", p["dim"])])
+    _apply_tick_indicator(style, root, name, p)
     style.configure("TRadiobutton", background=p["bg"], foreground=p["fg"])
     style.map("TRadiobutton",
               background=[("active", p["panel2"])],

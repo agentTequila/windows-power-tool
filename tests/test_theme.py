@@ -106,15 +106,20 @@ class StyleAppearanceTests(unittest.TestCase):
         self.assertNotEqual(bg, "#eeebe7")
         self.assertEqual(fg, theme.PALETTES["dark"]["accent_fg"])
 
-    def test_checkbutton_uses_tick_indicator_images(self):
+    def test_checkbutton_uses_tick_element_not_cross(self):
         theme.apply_theme(self.root, "dark")
         style = ttk.Style(self.root)
-        mapped = dict(style.map("TCheckbutton").get("indicatorimage", []))
-        self.assertIn("selected", mapped)
-        self.assertIn("!selected", mapped)
-        images = getattr(self.root, "_wpt_check_images", None)
-        self.assertIsNotNone(images)
-        self.assertEqual(images["on"].width(), 13)
+
+        def elements_in(layout):
+            found = []
+            for spec, opts in layout:
+                found.append(spec)
+                for child in opts.get("children", ()):
+                    found.extend(elements_in([child]))
+            return found
+
+        names = elements_in(style.layout("TCheckbutton"))
+        self.assertIn("wpt.tick.dark", names)
 
         def pixel(img, x, y):
             value = img.get(x, y)
@@ -125,10 +130,40 @@ class StyleAppearanceTests(unittest.TestCase):
         def rgb(hex_color):
             return tuple(int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
 
-        self.assertEqual(pixel(images["on"], 4, 8),
+        images = getattr(self.root, "_wpt_check_images", None)
+        self.assertIsNotNone(images)
+        dark_imgs = images["dark"]
+        self.assertEqual(dark_imgs["on"].width(), 13)
+        self.assertEqual(pixel(dark_imgs["on"], 4, 8),
                          rgb(theme.PALETTES["dark"]["accent"]))
-        self.assertEqual(pixel(images["off"], 4, 8),
+        self.assertEqual(pixel(dark_imgs["off"], 4, 8),
                          rgb(theme.PALETTES["dark"]["entry_bg"]))
+
+    def test_theme_switch_repoints_tick_element(self):
+        theme.apply_theme(self.root, "dark")
+        theme.apply_theme(self.root, "light")
+        style = ttk.Style(self.root)
+
+        def elements_in(layout):
+            found = []
+            for spec, opts in layout:
+                found.append(spec)
+                for child in opts.get("children", ()):
+                    found.extend(elements_in([child]))
+            return found
+
+        names = elements_in(style.layout("TCheckbutton"))
+        self.assertIn("wpt.tick.light", names)
+        self.assertNotIn("wpt.tick.dark", names)
+        images = getattr(self.root, "_wpt_check_images", None)
+        self.assertIn("light", images)
+        self.assertIn("dark", images)
+
+    def test_apply_theme_twice_same_theme_no_duplicate_element(self):
+        theme.apply_theme(self.root, "dark")
+        theme.apply_theme(self.root, "dark")
+        style = ttk.Style(self.root)
+        self.assertIn("wpt.tick.dark", style.element_names())
 
 
 if __name__ == "__main__":
