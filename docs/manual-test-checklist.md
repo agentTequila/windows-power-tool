@@ -14,11 +14,13 @@ Run `python run.py` as a normal user (UAC should prompt). Check every box.
 ## USB Guard
 - [ ] Indicator shows "USB storage: ALLOWED" (green) on a default system
 - [ ] Block → indicator turns red "BLOCKED — visible, access denied"
+- [ ] After Block: unplug + replug the flash stick (mount applies the policy)
 - [ ] Plugged USB flash drive: STILL appears in This PC while blocked
 - [ ] Opening or copying to the blocked drive = Access denied
 - [ ] Keyboard/mouse still work while blocked
-- [ ] Allow → indicator green; the same drive opens normally (reopen/replug)
-- [ ] Drives plugged BEFORE blocking still show while blocked
+- [ ] Allow → indicator green; unplug + replug the stick; it opens normally
+- [ ] A drive plugged in BEFORE Block stays accessible until replugged once
+      (this is the case that looked like "block does nothing")
 
 ## Windows Speedup
 - [ ] Clean Temp Data → green summary with items removed, MB freed, skipped count

@@ -76,8 +76,8 @@ class UsbGuardFrame(ttk.Frame):
 
         ttk.Label(
             self, wraplength=660, style="Dim.TLabel",
-            text="Takes effect on the next open of a drive. Replug or reopen "
-                 "the drive if it was already open.",
+            text="Windows applies this when a drive is mounted: after "
+                 "toggling, unplug any connected drive and plug it back in.",
         ).grid(row=4, column=0, sticky="w", pady=(4, 12))
 
         self.status = widgets.StatusPane(self)
@@ -93,14 +93,16 @@ class UsbGuardFrame(ttk.Frame):
                 style="Error.TLabel")
             if not silent:
                 self.status.set_success(
-                    "USB storage blocked. Drives stay visible but opening one "
-                    "is denied.")
+                    "USB storage blocked. Replug any connected drive — it "
+                    "then stays visible but opening it is denied.")
         else:
             self._indicator.configure(style="Success.TLabel")
             self._state_label.configure(text="USB storage: ALLOWED",
                                         style="Success.TLabel")
             if not silent:
-                self.status.set_success("USB storage allowed.")
+                self.status.set_success(
+                    "USB storage allowed. Replug any connected drive to "
+                    "regain access.")
 
     def _set(self, blocked: bool) -> None:
         if not widgets.guard_admin(self.status):
