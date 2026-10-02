@@ -5,8 +5,10 @@ import winreg
 from power_tool.core import widgets
 
 CLASS_GUID = "{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"
-POLICY_PATH = (rf"SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices"
-               rf"\{CLASS_GUID}")
+POLICY_ROOT = (r"SOFTWARE\Policies\Microsoft\Windows"
+               r"\RemovableStorageDevices")
+CLASS_PATH = rf"{POLICY_ROOT}\{CLASS_GUID}"
+DENY_ALL = "Deny_All"
 DENY_READ = "Deny_Read"
 DENY_WRITE = "Deny_Write"
 
@@ -17,14 +19,20 @@ _READ_FLAGS = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
 _WRITE_FLAGS = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
 
 
-def is_blocked() -> bool:
+def _deny_value(path: str, name: str) -> int | None:
     try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, POLICY_PATH, 0,
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path, 0,
                             _READ_FLAGS) as key:
-            value, _ = winreg.QueryValueEx(key, DENY_READ)
-            return int(value) == 1
+            value, _ = winreg.QueryValueEx(key, name)
+            return int(value)
     except (OSError, ValueError):
-        return False
+        return None
+
+
+def is_blocked() -> bool:
+    if _deny_value(POLICY_ROOT, DENY_ALL) == 1:
+        return True
+    return _deny_value(CLASS_PATH, DENY_READ) == 1
 
 
 def _ensure_driver_enabled() -> None:
@@ -39,11 +47,25 @@ def _ensure_driver_enabled() -> None:
 
 def set_blocked(blocked: bool) -> None:
     _ensure_driver_enabled()
-    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, POLICY_PATH, 0,
+    if blocked:
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, POLICY_ROOT, 0,
+                                _WRITE_FLAGS) as key:
+            winreg.SetValueEx(key, DENY_ALL, 0, winreg.REG_DWORD, 1)
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, CLASS_PATH, 0,
+                                _WRITE_FLAGS) as key:
+            winreg.SetValueEx(key, DENY_READ, 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, DENY_WRITE, 0, winreg.REG_DWORD, 1)
+        return
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, POLICY_ROOT, 0,
                             _WRITE_FLAGS) as key:
-        dword = 1 if blocked else 0
-        winreg.SetValueEx(key, DENY_READ, 0, winreg.REG_DWORD, dword)
-        winreg.SetValueEx(key, DENY_WRITE, 0, winreg.REG_DWORD, dword)
+            winreg.DeleteValue(key, DENY_ALL)
+    except OSError:
+        pass
+    try:
+        winreg.DeleteKey(winreg.HKEY_LOCAL_MACHINE, CLASS_PATH)
+    except OSError:
+        pass
 
 
 class UsbGuardFrame(ttk.Frame):
