@@ -9,7 +9,10 @@ EXPECTED_KEYS = [
     "power_tool.tools.system_info",
 ]
 
-EXPECTED_ADMIN = ["power_tool.tools.network"]
+EXPECTED_ADMIN = [
+    "power_tool.tools.network",
+    "power_tool.tools.installed_apps",
+]
 
 
 class RegistryTests(unittest.TestCase):
