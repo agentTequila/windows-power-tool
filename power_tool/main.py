@@ -1,3 +1,5 @@
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -5,9 +7,28 @@ from power_tool.core import admin, theme
 from power_tool.tools import REGISTRY
 
 
+def _icon_path() -> str:
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "assets", "icon.ico")
+
+
+def _apply_icon(root: tk.Tk) -> None:
+    path = _icon_path()
+    if not os.path.isfile(path):
+        return
+    try:
+        root.iconbitmap(path)
+    except (tk.TclError, OSError, TypeError):
+        pass
+
+
 class PowerToolApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        _apply_icon(self)
         self.title("Windows Power Tool")
         self.geometry("1100x740")
         self.minsize(940, 620)
