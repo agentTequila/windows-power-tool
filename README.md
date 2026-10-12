@@ -7,8 +7,9 @@ One exe, twelve tools, zero runtime dependencies.
 
 ## Download
 
-Grab [`WindowsPowerTool.exe`](WindowsPowerTool.exe) from this repository and run it —
-it requests Administrator rights via UAC on launch.
+Grab **WindowsPowerTool.exe** from the
+[latest release](https://github.com/agentTequila/windows-power-tool/releases/latest)
+and run it — it requests Administrator rights via UAC on launch.
 
 > **Windows SmartScreen:** the exe is unsigned, so SmartScreen may show
 > "Windows protected your PC". Click **More info → Run anyway**.
