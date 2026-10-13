@@ -2,17 +2,13 @@
 
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
-A portable, always-elevated Windows admin toolbox built with Python and tkinter.
-One exe, twelve tools, zero runtime dependencies.
+A portable Windows admin toolbox that always runs elevated. Python and tkinter, one exe, twelve tools, no runtime dependencies.
 
 ## Download
 
-Grab **WindowsPowerTool.exe** from the
-[latest release](https://github.com/agentTequila/windows-power-tool/releases/latest)
-and run it — it requests Administrator rights via UAC on launch.
+Get **WindowsPowerTool.exe** from the [latest release](https://github.com/agentTequila/windows-power-tool/releases/latest) and run it. Windows asks for Administrator rights through UAC, which is expected: the tool needs them.
 
-> **Windows SmartScreen:** the exe is unsigned, so SmartScreen may show
-> "Windows protected your PC". Click **More info → Run anyway**.
+> **SmartScreen:** the exe is unsigned, so Windows may show "Windows protected your PC". Click **More info → Run anyway**.
 
 ## Tools
 
@@ -20,34 +16,34 @@ and run it — it requests Administrator rights via UAC on launch.
 
 | Tool | What it does |
 |---|---|
-| **USB Guard** | Disable/enable USB storage per device class via the USBSTOR registry. Disabled drives still show in This PC but open Access Denied; keyboards and mice are unaffected. |
-| **Windows Speedup** | Clears `%TEMP%`, `Windows\Temp`, Recent and Prefetch; optionally clears browser cache/cookies (Chrome, Edge, Firefox) and reopens the browser. Clean-only or clean-and-reboot with a cancelable 10s countdown. |
-| **Log Collector** | Collects Application/System/Security/Setup event logs for the last N minutes, filtered by level, to `.txt`, `.csv` or native `.evtx`. |
-| **System Info** | Hostname, OS, IPs/MAC, local users and groups, hardware, storage (incl. removable) and uptime. Copy or save to text. |
+| **USB Guard** | Turns USB storage on or off per device class through the USBSTOR registry. A disabled drive still shows up in This PC, but opening it gives Access Denied. Keyboards and mice are never touched. |
+| **Windows Speedup** | Clears `%TEMP%`, `Windows\Temp`, Recent and Prefetch. Optionally wipes browser cache and cookies (Chrome, Edge, Firefox) and opens the browser again after. Pick clean-only or clean-and-reboot, the reboot coming with a 10-second countdown you can cancel. |
+| **Log Collector** | Grabs Application/System/Security/Setup event logs from the last N minutes, filtered by level. Saves as `.txt`, `.csv`, or native `.evtx`. |
+| **System Info** | Hostname, OS, IPs and MAC addresses, local users and groups, hardware, storage (removable included), uptime. Copy it or save to a text file. |
 
 ### Admin
 
 | Tool | What it does |
 |---|---|
-| **Network** | Flush the DNS cache, release/renew the IP address, and ping a host — output shown below each run. |
-| **Installed Apps** | Every program in the Windows uninstall hives. Live search, Export CSV, and Uninstall which starts the program's own uninstaller after confirmation. |
-| **Users & Groups** | Manage local accounts: group membership, password reset, enable, disable and delete. Destructive actions ask for confirmation first. |
-| **Processes** | Live process table with search and a confirmed End Task. |
-| **Services** | Service table with search and confirmed start/stop/restart plus startup-type changes. |
+| **Network** | Flush the DNS cache, release or renew the IP, ping a host. Output shows up underneath after each run. |
+| **Installed Apps** | Everything sitting in the Windows uninstall hives, with search as you type. Export to CSV, or hit Uninstall, which runs the program's own uninstaller after asking you first. |
+| **Users & Groups** | Local accounts: group membership, password reset, enable, disable, delete. Anything destructive asks first. |
+| **Processes** | Live table of running processes with search. Ending a task always confirms. |
+| **Services** | The same treatment for services: search, start, stop, restart and change startup type, every one of them confirmed before it runs. |
 
 ### System
 
 | Tool | What it does |
 |---|---|
-| **Disk & Cleanup** | Fixed and removable drives with total size, free space and file system; launches the Windows Disk Cleanup utility. |
-| **Restore Point** | Lists existing system restore points and creates new ones with confirmation. |
-| **License Info** | Windows edition, product key (registry or OEM source when available) and activation status; copy to clipboard. |
+| **Disk & Cleanup** | Fixed and removable drives with size, free space and file system. A button opens Windows' own Disk Cleanup, so you choose what gets deleted. |
+| **Restore Point** | Shows the existing restore points and lets you create a new one, with confirmation. |
+| **License Info** | Windows edition, product key (from the registry, or the OEM source when that's what's available) and activation status. Any of it copies to the clipboard. |
 
 ## Requirements
 
-- Windows 10 / 11
-- Python 3.13+ (only to run from source — the exe needs nothing)
-- Administrator privileges (the exe self-elevates via UAC)
+- Windows 10 or 11
+- Python 3.13+, only if you run from source (the exe needs nothing)
+- Administrator rights (the exe asks through UAC on launch)
 
 ## Run from source
 
@@ -68,19 +64,14 @@ pip install -r requirements.txt
 pyinstaller --noconfirm build.spec
 ```
 
-Output: `dist\WindowsPowerTool.exe` (onefile, no console, requests admin on launch).
-To regenerate the app icon: `python assets/generate_icon.py` (requires Pillow).
+Output lands in `dist\WindowsPowerTool.exe` (onefile, no console, asks for admin on launch). To regenerate the app icon, run `python assets/generate_icon.py`, which needs Pillow.
 
 ## Notes
 
-- Nothing is written next to the exe; theme preference lives in
-  `%LOCALAPPDATA%\WindowsPowerTool\settings.json`.
-- Locked/temporarily-in-use files are always skipped, never force-deleted.
-- Destructive actions (service control, account changes, uninstall, restore
-  points) always confirm before running; reads and refreshes never prompt.
+- Nothing gets written next to the exe. Your theme choice lives in `%LOCALAPPDATA%\WindowsPowerTool\settings.json`.
+- Locked or in-use files are always skipped. Nothing is ever force-deleted.
+- Service control, account changes, uninstall, restore points: all confirm first. Reads and refreshes never prompt.
 
 ## License
 
-PolyForm Noncommercial 1.0.0 — free to use, modify and share for
-noncommercial purposes; **selling the software or derivatives is not
-permitted**. See [LICENSE](LICENSE).
+PolyForm Noncommercial 1.0.0: free to use, modify and share for noncommercial purposes, but selling the software or derived versions isn't permitted. Full text in [LICENSE](LICENSE).
