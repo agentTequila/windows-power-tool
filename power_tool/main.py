@@ -3,6 +3,7 @@ import sys
 import tkinter as tk
 from tkinter import ttk
 
+from power_tool import __version__
 from power_tool.core import admin, theme
 from power_tool.tools import REGISTRY
 
@@ -29,7 +30,7 @@ class PowerToolApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         _apply_icon(self)
-        self.title("Windows Power Tool")
+        self.title(f"Windows Power Tool {__version__}")
         self.geometry("1100x740")
         self.minsize(940, 620)
         self._theme_name = theme.load_theme_name()
@@ -50,7 +51,7 @@ class PowerToolApp(tk.Tk):
         bar = ttk.Frame(self, style="Panel.TFrame", padding=(14, 8))
         bar.grid(row=0, column=0, columnspan=2, sticky="ew")
         bar.grid_columnconfigure(1, weight=1)
-        ttk.Label(bar, text="Windows Power Tool",
+        ttk.Label(bar, text=f"Windows Power Tool {__version__}",
                   style="PanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         elevated = admin.is_admin()
         ttk.Label(
