@@ -15,6 +15,7 @@ EXPECTED_ADMIN = [
     "power_tool.tools.users_groups",
     "power_tool.tools.processes",
     "power_tool.tools.services",
+    "power_tool.tools.console",
 ]
 
 EXPECTED_SYSTEM = [
@@ -50,7 +51,7 @@ class RegistryTests(unittest.TestCase):
         labels = [label for label, _ in REGISTRY[1][1]]
         self.assertEqual(labels, ["Network", "Installed Apps",
                                   "Users & Groups", "Processes",
-                                  "Services"])
+                                  "Services", "Console"])
 
     def test_system_group_lists_tools_in_order(self):
         self.assertEqual(REGISTRY[2][0], "System")

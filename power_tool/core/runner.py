@@ -35,8 +35,8 @@ def run_powershell(script: str, timeout: int = 300) -> Result:
     return run(POWERSHELL + [script], timeout=timeout)
 
 
-def start_detached(args: Sequence[str]) -> int:
-    proc = subprocess.Popen(list(args))
+def start_detached(args: Sequence[str], cwd: str | None = None) -> int:
+    proc = subprocess.Popen(list(args), cwd=cwd)
     return proc.pid
 
 
