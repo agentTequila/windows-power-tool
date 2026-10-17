@@ -1,7 +1,11 @@
 import csv
+import os
 import shlex
+import shutil
 import tkinter as tk
 import winreg
+from functools import partial
+from pathlib import Path
 from tkinter import filedialog, ttk
 
 from power_tool.core import runner, tasks, widgets
@@ -10,6 +14,9 @@ UNINSTALL_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 
 CSV_HEADER = ["Name", "Version", "Publisher", "Size", "Installed",
               "UninstallString"]
+
+FOLDER_ROOT_KEYS = ("PROGRAMFILES", "PROGRAMFILES(X86)", "ProgramData",
+                    "LOCALAPPDATA", "APPDATA")
 
 
 def _hives():
@@ -69,6 +76,163 @@ def gather_apps() -> list[dict]:
                     })
     apps.sort(key=lambda app: app["name"].lower())
     return apps
+
+
+def remove_path(path: Path) -> tuple[bool, int]:
+    """Delete *path*, returning (ok, bytes_freed). Never raises."""
+    try:
+        if path.is_dir():
+            size = sum(
+                child.stat().st_size
+                for child in path.rglob("*")
+                if child.is_file()
+            )
+            shutil.rmtree(path)
+            return True, size
+        if path.is_file():
+            size = path.stat().st_size
+            path.unlink()
+            return True, size
+        return False, 0
+    except OSError:
+        return False, 0
+
+
+def scan_leftover_folders(display_name: str, publisher: str,
+                          roots: list[Path]) -> list[dict]:
+    """One level of folders under each root.
+
+    Exact (case-insensitive) folder-name match against the display name is
+    high confidence; a match against the publisher is low confidence and is
+    only used when the publisher is at least 4 characters. Generic short
+    display names never trigger a scan.
+    """
+    target = display_name.strip().lower()
+    if len(target) < 4:
+        return []
+    findings: list[dict] = []
+    for root in roots:
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            name = entry.name.lower()
+            if name == target:
+                findings.append({
+                    "path": entry,
+                    "kind": "folder",
+                    "confidence": "high",
+                    "label": str(entry),
+                })
+                continue
+            if (len(publisher.strip()) >= 4
+                    and name == publisher.strip().lower()):
+                findings.append({
+                    "path": entry,
+                    "kind": "folder",
+                    "confidence": "low",
+                    "label": str(entry),
+                })
+    return findings
+
+
+def _folder_roots() -> list[Path]:
+    """Build the folder scan roots from the environment at call time."""
+    roots: list[Path] = []
+    for key in FOLDER_ROOT_KEYS:
+        value = os.environ.get(key)
+        if value:
+            roots.append(Path(value))
+    return roots
+
+
+def _scan_registry_hive(hive, root: str, view: int,
+                        display_name: str) -> list[str]:
+    """Leaf subkey names under one hive whose DisplayName matches exactly,
+    case-insensitively."""
+    target = display_name.strip().lower()
+    matches: list[str] = []
+    try:
+        with winreg.OpenKey(hive, root, 0, winreg.KEY_READ | view) as key:
+            count = winreg.QueryInfoKey(key)[0]
+            for index in range(count):
+                try:
+                    subname = winreg.EnumKey(key, index)
+                    with winreg.OpenKey(key, subname, 0,
+                                        winreg.KEY_READ | view) as sub:
+                        value = _get(sub, "DisplayName")
+                except OSError:
+                    continue
+                if value and str(value).strip().lower() == target:
+                    matches.append(subname)
+    except OSError:
+        pass
+    return matches
+
+
+def scan_leftover_registry(display_name: str) -> list[str]:
+    """Re-walk the uninstall hives; subkey paths whose DisplayName equals
+    *display_name* (case-insensitive exact only)."""
+    found: list[str] = []
+    for hive, root, view in _hives():
+        for subname in _scan_registry_hive(hive, root, view, display_name):
+            path = f"{root}\\{subname}"
+            if path not in found:
+                found.append(path)
+    return found
+
+
+def delete_registry_key(hive, subpath: str) -> bool:
+    try:
+        winreg.DeleteKey(hive, subpath)
+        return True
+    except OSError:
+        return False
+
+
+def default_checked(findings: list[dict]) -> list[bool]:
+    """Dialog defaults: high-confidence findings ticked, low unticked."""
+    return [finding.get("confidence") == "high" for finding in findings]
+
+
+def _gather_findings(app: dict) -> list[dict]:
+    name = str(app.get("name", ""))
+    publisher = str(app.get("publisher", ""))
+    findings = scan_leftover_folders(name, publisher, _folder_roots())
+    for hive, root, view in _hives():
+        for subname in _scan_registry_hive(hive, root, view, name):
+            path = f"{root}\\{subname}"
+            findings.append({
+                "kind": "registry",
+                "path": path,
+                "hive": hive,
+                "label": path,
+                "confidence": "high",
+            })
+    return findings
+
+
+def _delete_findings(selected: list[dict]) -> tuple[int, int, int]:
+    removed = 0
+    freed = 0
+    skipped = 0
+    for finding in selected:
+        if finding["kind"] == "folder":
+            ok, size = remove_path(Path(finding["path"]))
+            if ok:
+                removed += 1
+                freed += size
+            else:
+                skipped += 1
+        elif finding["kind"] == "registry":
+            if delete_registry_key(finding["hive"], finding["path"]):
+                removed += 1
+            else:
+                skipped += 1
+    return removed, freed, skipped
 
 
 def format_size(size_kb) -> str:
@@ -168,6 +332,9 @@ class InstalledAppsFrame(ttk.Frame):
             buttons, text="Uninstall", style="Danger.TButton",
             command=self._uninstall)
         self._uninstall_button.pack(side="left")
+        self._scan_button = ttk.Button(
+            buttons, text="Scan leftovers", command=self._scan_leftovers)
+        self._scan_button.pack(side="left")
 
         self.status = widgets.StatusPane(self)
         self.status.pack(fill="x", pady=(10, 0))
@@ -179,7 +346,7 @@ class InstalledAppsFrame(ttk.Frame):
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
         for button in (self._refresh_button, self._export_button,
-                       self._uninstall_button):
+                       self._uninstall_button, self._scan_button):
             button.configure(state=state)
 
     def _refresh(self) -> None:
@@ -244,6 +411,9 @@ class InstalledAppsFrame(ttk.Frame):
             return
         self.status.set_success(
             f"Uninstaller started for {app['name']}. Follow its prompts.")
+        if widgets.confirm(self, "Scan leftovers",
+                           f"Scan for leftovers of {app['name']} now?"):
+            self._scan_leftovers_for(app)
 
     def _export(self) -> None:
         if not self._visible:
@@ -262,6 +432,100 @@ class InstalledAppsFrame(ttk.Frame):
             return
         self.status.set_success(
             f"Exported {len(self._visible)} apps to {path}")
+
+    def _scan_leftovers(self) -> None:
+        app = self._selected_app()
+        if app is None:
+            self.status.set_warn("Select an app first.")
+            return
+        self._scan_leftovers_for(app)
+
+    def _scan_leftovers_for(self, app: dict) -> None:
+        """Start a leftover scan for *app*; no tree selection required."""
+        self._set_busy(True)
+        self.status.set_working("Scanning for leftovers...")
+        tasks.BackgroundTask(
+            self, work=partial(_gather_findings, app),
+            on_done=lambda findings: self._on_scan_done(findings, app),
+            on_error=self._scan_error).start()
+
+    def _on_scan_done(self, findings: list[dict], app: dict) -> None:
+        self._set_busy(False)
+        if not findings:
+            self.status.set_success("No leftovers found.")
+            return
+        LeftoverDialog(
+            self, findings,
+            on_remove=lambda selected: self._remove_leftovers(selected, app))
+
+    def _remove_leftovers(self, selected: list[dict], app: dict) -> None:
+        if not selected:
+            self.status.set_idle("Nothing selected.")
+            return
+        # Safety order: guard_admin FIRST, then confirm listing the items,
+        # and only then is any deletion scheduled.
+        if not widgets.guard_admin(self.status):
+            return
+        listed = "\n".join(finding["label"] for finding in selected)
+        if not widgets.confirm(
+                self, "Remove leftovers",
+                f"Remove {len(selected)} selected leftover item(s)?\n{listed}"):
+            self.status.set_idle("Leftover removal cancelled.")
+            return
+        self._set_busy(True)
+        self.status.set_working("Removing selected leftovers...")
+        tasks.BackgroundTask(
+            self, work=partial(_delete_findings, selected),
+            on_done=self._on_remove_done,
+            on_error=self._remove_error).start()
+
+    def _on_remove_done(self, result: tuple[int, int, int]) -> None:
+        removed, freed, skipped = result
+        self._set_busy(False)
+        self.status.set_success(
+            f"Removed {removed} items · {freed / (1024 * 1024):.1f} "
+            f"MB freed · {skipped} skipped.")
+
+    def _scan_error(self, exc: BaseException) -> None:
+        self._set_busy(False)
+        self.status.set_error(f"Leftover scan failed: {exc}")
+
+    def _remove_error(self, exc: BaseException) -> None:
+        self._set_busy(False)
+        self.status.set_error(f"Leftover removal failed: {exc}")
+
+
+class LeftoverDialog(tk.Toplevel):
+    def __init__(self, parent, findings: list[dict], on_remove):
+        super().__init__(parent)
+        self.title("Remove leftover items")
+        self.transient(parent)
+        self.grab_set()
+        self._findings = findings
+        self._on_remove = on_remove
+        self._vars: list[tk.BooleanVar] = []
+        ttk.Label(
+            self,
+            text="Leftover items found. Uncheck anything you want to keep.",
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+        for finding, checked in zip(findings, default_checked(findings)):
+            var = tk.BooleanVar(value=checked)
+            self._vars.append(var)
+            ttk.Checkbutton(self, text=finding["label"],
+                            variable=var).pack(anchor="w", padx=24, pady=2)
+        buttons = ttk.Frame(self)
+        buttons.pack(anchor="e", padx=12, pady=(10, 12))
+        ttk.Button(buttons, text="Close", command=self.destroy).pack(
+            side="right", padx=(6, 0))
+        ttk.Button(buttons, text="Remove selected", style="Danger.TButton",
+                   command=self._do_remove).pack(side="right")
+        self.wait_window(self)
+
+    def _do_remove(self) -> None:
+        selected = [finding for finding, var
+                    in zip(self._findings, self._vars) if var.get()]
+        self.destroy()
+        self._on_remove(selected)
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:

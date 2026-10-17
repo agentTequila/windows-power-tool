@@ -201,6 +201,139 @@ class WriteCsvTests(unittest.TestCase):
         self.assertIn("Firefox", lines[1])
 
 
+class ScannerTests(unittest.TestCase):
+    def _tmp_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name)
+
+    def test_exact_display_name_folder_is_high_confidence(self):
+        root = self._tmp_root()
+        (root / "Firefox").mkdir()
+        (root / "Waterfox").mkdir()
+        found = installed_apps.scan_leftover_folders("Firefox", "Mozilla",
+                                                     [root])
+        self.assertEqual(len(found), 1)
+        item = found[0]
+        self.assertEqual(item["kind"], "folder")
+        self.assertEqual(item["confidence"], "high")
+        self.assertEqual(item["path"], root / "Firefox")
+        self.assertEqual(item["label"], str(root / "Firefox"))
+
+    def test_publisher_only_match_is_low_confidence(self):
+        root = self._tmp_root()
+        (root / "Acme Corp").mkdir()
+        found = installed_apps.scan_leftover_folders("Something Else",
+                                                     "Acme Corp", [root])
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["confidence"], "low")
+
+    def test_publisher_below_four_chars_never_matches(self):
+        root = self._tmp_root()
+        (root / "AB").mkdir()
+        found = installed_apps.scan_leftover_folders("No Match", "AB", [root])
+        self.assertEqual(found, [])
+
+    def test_short_display_name_never_matches(self):
+        root = self._tmp_root()
+        (root / "Git").mkdir()
+        found = installed_apps.scan_leftover_folders("Git", "Git SCM", [root])
+        self.assertEqual(found, [])
+
+    def test_short_display_name_with_spaces_never_matches(self):
+        root = self._tmp_root()
+        (root / "Git").mkdir()
+        found = installed_apps.scan_leftover_folders(" Git ", "Git SCM", [root])
+        self.assertEqual(found, [])
+
+    def test_no_match_returns_empty(self):
+        root = self._tmp_root()
+        (root / "Firefox").mkdir()
+        found = installed_apps.scan_leftover_folders("Chrome", "Google LLC",
+                                                     [root])
+        self.assertEqual(found, [])
+
+    def test_case_insensitive_folder_match(self):
+        root = self._tmp_root()
+        (root / "FIREFOX").mkdir()
+        found = installed_apps.scan_leftover_folders("firefox", "Mozilla",
+                                                     [root])
+        self.assertEqual([item["path"] for item in found],
+                         [root / "FIREFOX"])
+
+    def test_registry_scan_matches_exact_display_name_only(self):
+        view64 = FakeKey(children=[
+            FakeKey(values={"DisplayName": "Firefox", "DisplayVersion": "128.0"}),
+            FakeKey(values={"DisplayName": "Firefox ESR"}),
+            FakeKey(values={"DisplayName": "firefox"}),
+            FakeKey(values={"NoDisplayName": "x"}),
+        ])
+        fake = FakeWinreg({
+            (FakeWinreg.HKEY_LOCAL_MACHINE, installed_apps.UNINSTALL_PATH,
+             0x100): view64,
+        })
+        with patch.object(installed_apps, "winreg", fake):
+            result = installed_apps.scan_leftover_registry("Firefox")
+        expected = [
+            installed_apps.UNINSTALL_PATH + "\\0",
+            installed_apps.UNINSTALL_PATH + "\\2",
+        ]
+        self.assertEqual(result, expected)
+
+    def test_registry_scan_skips_missing_hive(self):
+        fake = FakeWinreg({})
+        with patch.object(installed_apps, "winreg", fake):
+            self.assertEqual(installed_apps.scan_leftover_registry("Firefox"),
+                             [])
+
+    def test_remove_path_deletes_dir_and_counts_bytes(self):
+        root = self._tmp_root()
+        target = root / "leftover"
+        target.mkdir()
+        (target / "one.bin").write_bytes(b"x" * 1000)
+        (target / "two.bin").write_bytes(b"y" * 2000)
+        ok, size = installed_apps.remove_path(target)
+        self.assertTrue(ok)
+        self.assertEqual(size, 3000)
+        self.assertFalse(target.exists())
+
+    def test_remove_path_unlinks_file(self):
+        root = self._tmp_root()
+        target = root / "leftover.bin"
+        target.write_bytes(b"z" * 256)
+        ok, size = installed_apps.remove_path(target)
+        self.assertTrue(ok)
+        self.assertEqual(size, 256)
+        self.assertFalse(target.exists())
+
+    def test_remove_path_missing_returns_false_zero(self):
+        root = self._tmp_root()
+        self.assertEqual(installed_apps.remove_path(root / "gone"),
+                         (False, 0))
+
+    def test_remove_path_locked_returns_false(self):
+        root = self._tmp_root()
+        target = root / "locked"
+        target.mkdir()
+        with patch.object(installed_apps.shutil, "rmtree",
+                          side_effect=OSError("busy")):
+            ok, size = installed_apps.remove_path(target)
+        self.assertFalse(ok)
+        self.assertEqual(size, 0)
+        self.assertTrue(target.exists())
+
+    def test_dialog_defaults_high_ticked_low_unticked(self):
+        findings = [
+            {"kind": "folder", "confidence": "high"},
+            {"kind": "folder", "confidence": "low"},
+            {"kind": "registry", "confidence": "high"},
+            {"kind": "folder", "confidence": "low"},
+        ]
+        self.assertEqual(
+            installed_apps.default_checked(findings), [True, False, True,
+                                                       False])
+
+
 class InstalledAppsFrameTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -255,12 +388,29 @@ class InstalledAppsFrameTests(unittest.TestCase):
     def test_uninstall_confirmed_starts_uninstaller(self):
         self._load()
         self.frame._tree.selection_set("1")
+        self.fake_task.reset_mock()
+        # Second confirm is the post-uninstall leftover prompt; declining it
+        # must not start a scan task.
         with patch.object(installed_apps.widgets, "confirm",
-                          return_value=True), \
+                          side_effect=[True, False]), \
              patch.object(installed_apps.runner, "start_detached") as fake:
             self.frame._uninstall()
         fake.assert_called_once_with(["MsiExec.exe", "/X{ABC}"])
         self.assertIn("Uninstaller started", self.frame.status.text())
+        self.fake_task.assert_not_called()
+
+    def test_uninstall_prompts_leftover_scan_after_success(self):
+        self._load()
+        self.frame._tree.selection_set("1")
+        self.fake_task.reset_mock()
+        with patch.object(installed_apps.widgets, "confirm",
+                          side_effect=[True, True]), \
+             patch.object(installed_apps.runner, "start_detached") as fake:
+            self.frame._uninstall()
+        fake.assert_called_once_with(["MsiExec.exe", "/X{ABC}"])
+        self.assertTrue(self.fake_task.called)
+        self.assertTrue(self.fake_task.return_value.start.called)
+        self.assertIn("Scanning for leftovers", self.frame.status.text())
 
     def test_uninstall_launch_failure_shown_as_status_error(self):
         self._load()
@@ -306,13 +456,15 @@ class InstalledAppsFrameTests(unittest.TestCase):
         self.frame._refresh()
         for button in (self.frame._refresh_button,
                        self.frame._export_button,
-                       self.frame._uninstall_button):
+                       self.frame._uninstall_button,
+                       self.frame._scan_button):
             self.assertEqual(str(button.cget("state")), "disabled")
         kwargs = self.fake_task.call_args.kwargs
         kwargs["on_error"](RuntimeError("boom"))
         for button in (self.frame._refresh_button,
                        self.frame._export_button,
-                       self.frame._uninstall_button):
+                       self.frame._uninstall_button,
+                       self.frame._scan_button):
             self.assertEqual(str(button.cget("state")), "normal")
         self.assertIn("boom", self.frame.status.text())
         self.assertEqual(str(self.frame.status._label.cget("style")),
@@ -334,6 +486,99 @@ class InstalledAppsFrameTests(unittest.TestCase):
         fake_start.assert_not_called()
         self.assertIn("Run as administrator required",
                       self.frame.status.text())
+
+    def test_scan_leftovers_requires_selection_warns(self):
+        self.fake_task.reset_mock()
+        self.frame._scan_leftovers()
+        self.fake_task.assert_not_called()
+        self.assertIn("Select an app first", self.frame.status.text())
+
+    def test_scan_leftovers_is_unguarded(self):
+        # Scanning is a read: it starts even as non-admin and never calls
+        # guard_admin.
+        self._load()
+        self.frame._tree.selection_set("0")
+        self.fake_task.reset_mock()
+        guard_calls = []
+
+        def spy(status):
+            guard_calls.append(status)
+            return REAL_GUARD_ADMIN(status)
+
+        with patch.object(installed_apps.widgets, "guard_admin", spy), \
+             patch("power_tool.core.admin.is_admin", return_value=False):
+            self.frame._scan_leftovers()
+        self.assertEqual(guard_calls, [])
+        self.assertTrue(self.fake_task.called)
+        self.assertTrue(self.fake_task.return_value.start.called)
+        self.assertIn("Scanning for leftovers", self.frame.status.text())
+
+    def test_remove_leftovers_guarded_then_confirmed_before_deletion(self):
+        self._load()
+        self.frame._tree.selection_set("0")
+        app = self.frame._visible[0]
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder_path = Path(tmp.name) / "Firefox"
+        folder_path.mkdir()
+        registry_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Firefox"
+        findings = [
+            {"kind": "folder", "path": folder_path,
+             "label": str(folder_path), "confidence": "high"},
+            {"kind": "registry", "path": registry_path, "label": registry_path,
+             "hive": "HKEY_LOCAL_MACHINE", "confidence": "high"},
+        ]
+
+        captured = {}
+
+        def fake_dialog(parent, findings_arg, on_remove):
+            captured["on_remove"] = on_remove
+
+        with patch.object(installed_apps, "LeftoverDialog",
+                          side_effect=fake_dialog), \
+             patch.object(installed_apps, "remove_path") as fake_remove, \
+             patch.object(installed_apps.widgets, "confirm") as fake_confirm, \
+             patch.object(installed_apps.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             patch.object(installed_apps, "winreg") as fake_winreg:
+            fake_remove.return_value = (True, 1234)
+
+            # Phase 1: real guard, not admin -> nothing is touched.
+            self.frame._on_scan_done(findings, app)
+            on_remove = captured["on_remove"]
+            on_remove(list(findings))
+            fake_confirm.assert_not_called()
+            fake_remove.assert_not_called()
+            self.assertIn("administrator required",
+                          self.frame.status.text())
+
+            # Phase 2: admin, but confirmation declined -> no deletion.
+            fake_confirm.return_value = False
+            with patch("power_tool.core.admin.is_admin", return_value=True):
+                on_remove(list(findings))
+            fake_confirm.assert_called()
+            fake_remove.assert_not_called()
+
+            # Phase 3: admin + confirmation -> task starts; deletion deferred.
+            self.fake_task.reset_mock()
+            fake_confirm.return_value = True
+            with patch("power_tool.core.admin.is_admin", return_value=True):
+                on_remove(list(findings))
+            self.assertTrue(self.fake_task.called)
+            self.assertTrue(self.fake_task.return_value.start.called)
+            fake_remove.assert_not_called()
+            fake_winreg.DeleteKey.assert_not_called()
+
+            # Running the worker performs each deletion exactly once.
+            kwargs = self.fake_task.call_args.kwargs
+            kwargs["on_done"](kwargs["work"]())
+            fake_remove.assert_called_once_with(folder_path)
+            fake_winreg.DeleteKey.assert_called_once_with(
+                "HKEY_LOCAL_MACHINE", registry_path)
+            self.assertIn("Removed 2 items", self.frame.status.text())
+            self.assertIn("MB freed", self.frame.status.text())
+            self.assertIn("skipped", self.frame.status.text())
 
 
 if __name__ == "__main__":
