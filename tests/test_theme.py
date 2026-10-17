@@ -159,6 +159,15 @@ class StyleAppearanceTests(unittest.TestCase):
         self.assertIn("light", images)
         self.assertIn("dark", images)
 
+    def test_switch_back_reuses_cached_tick_images(self):
+        theme.apply_theme(self.root, "dark")
+        dark_first = dict(self.root._wpt_check_images["dark"])
+        theme.apply_theme(self.root, "light")
+        theme.apply_theme(self.root, "dark")
+        dark_again = self.root._wpt_check_images["dark"]
+        self.assertIs(dark_first["on"], dark_again["on"])
+        self.assertIs(dark_first["off"], dark_again["off"])
+
     def test_apply_theme_twice_same_theme_no_duplicate_element(self):
         theme.apply_theme(self.root, "dark")
         theme.apply_theme(self.root, "dark")

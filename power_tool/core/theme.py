@@ -93,12 +93,15 @@ def _tick_images(p: dict) -> dict:
 def _apply_tick_indicator(style: ttk.Style, root: tk.Misc, name: str,
                           p: dict) -> None:
     element = f"wpt.tick.{name}"
-    images = _tick_images(p)
     cache = getattr(root, "_wpt_check_images", None)
     if not isinstance(cache, dict):
         cache = {}
         root._wpt_check_images = cache
-    cache[name] = images
+    if name in cache:
+        images = cache[name]
+    else:
+        images = _tick_images(p)
+        cache[name] = images
     if element not in style.element_names():
         style.element_create(
             element, "image", images["off"],
