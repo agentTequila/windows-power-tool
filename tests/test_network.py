@@ -1,3 +1,4 @@
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -9,18 +10,49 @@ from power_tool.tools import network
 REAL_GUARD_ADMIN = widgets.guard_admin
 
 
-class PingArgsTests(unittest.TestCase):
-    def test_builds_ping_command(self):
-        self.assertEqual(network.ping_args("example.com"),
-                         ["ping", "-n", "4", "example.com"])
+class PingOnceArgsTests(unittest.TestCase):
+    def test_builds_single_echo_command(self):
+        self.assertEqual(network.ping_once_args("example.com"),
+                         ["ping", "-n", "1", "-w", "2000", "example.com"])
 
     def test_trims_whitespace(self):
-        self.assertEqual(network.ping_args("  8.8.8.8  "),
-                         ["ping", "-n", "4", "8.8.8.8"])
+        self.assertEqual(network.ping_once_args("  8.8.8.8  "),
+                         ["ping", "-n", "1", "-w", "2000", "8.8.8.8"])
 
     def test_empty_host_raises(self):
         with self.assertRaises(ValueError):
-            network.ping_args("   ")
+            network.ping_once_args("   ")
+
+
+class PingSessionTests(unittest.TestCase):
+    @patch.object(network, "runner")
+    def test_ping_session_counts_timeouts_as_loss(self, fake_runner):
+        fake_runner.run.side_effect = [
+            runner.Result(0, "Reply from 8.8.8.8: bytes=32 time=10ms TTL=118", ""),
+            runner.Result(1, "Request timed out.", ""),
+        ]
+        stop = threading.Event()
+        events = []
+
+        def put(item):
+            events.append(item)
+            if item[0] == "stats" and item[1] == 2:
+                stop.set()
+
+        result = network.run_ping_session("8.8.8.8", stop, put)
+        self.assertEqual(result, {"sent": 2, "lost": 1})
+
+    @patch.object(network, "runner")
+    def test_done_event_payload(self, fake_runner):
+        fake_runner.run.side_effect = [runner.Result(1, "timed out", "")]
+        stop = threading.Event()
+
+        def put(item):
+            if item[0] == "stats":
+                stop.set()
+
+        result = network.run_ping_session("10.255.255.1", stop, put)
+        self.assertEqual(result["lost"], 1)
 
 
 class ActionCommandsTests(unittest.TestCase):
@@ -134,19 +166,41 @@ class NetworkFrameTests(unittest.TestCase):
             "normal")
         self.assertIn("nope", self.frame.status.text())
 
-    @patch.object(network.tasks, "BackgroundTask")
-    def test_ping_empty_entry_reports_error_without_task(self, fake_task):
-        self.frame._ping()
-        fake_task.assert_not_called()
+    def test_ping_button_toggles_start_stop_and_busy(self):
+        self.assertEqual(str(self.frame._ping_button.cget("text")), "Start")
+        with patch.object(network.threading, "Thread") as fake_thread, \
+             patch.object(network.queue, "Queue") as fake_queue:
+            self.frame._ping_entry.insert(0, "8.8.8.8")
+            self.frame._start_ping()
+        fake_thread.return_value.start.assert_called_once()
+        self.assertEqual(str(self.frame._ping_button.cget("text")), "Stop")
+        self.assertEqual(
+            str(self.frame._action_buttons["Flush DNS"].cget("state")),
+            "disabled")
+
+    def test_ping_empty_entry_reports_error_without_thread(self):
+        with patch.object(network.threading, "Thread") as fake_thread:
+            self.frame._start_ping()
+        fake_thread.assert_not_called()
         self.assertIn("host name", self.frame.status.text())
 
-    @patch.object(network.tasks, "BackgroundTask")
-    def test_ping_builds_four_echo_command(self, fake_task):
-        self.frame._ping_entry.insert(0, " 8.8.8.8 ")
-        self.frame._ping()
-        fake_task.return_value.start.assert_called_once()
-        self.assertEqual(fake_task.call_args.kwargs["work"].args[0],
-                         [["ping", "-n", "4", "8.8.8.8"]])
+    def test_drain_updates_stats_and_appends_lines(self):
+        self.frame._ping_queue.put(("line", "Reply from 8.8.8.8: bytes=32"))
+        self.frame._ping_queue.put(("stats", 3, 1))
+        self.frame._drain_ping()
+        self.assertIn("Reply from 8.8.8.8",
+                      self.frame._ping_output.get("1.0", "end"))
+        self.assertIn("3", str(self.frame._ping_stats.cget("text")))
+
+    def test_stop_finalizes_and_reenables_start(self):
+        self.frame._ping_queue.put(("done", {"sent": 4, "lost": 4}))
+        self.frame._drain_ping()
+        self.assertEqual(str(self.frame._ping_button.cget("text")), "Start")
+        self.assertEqual(
+            str(self.frame._action_buttons["Flush DNS"].cget("state")),
+            "normal")
+        self.assertIn("stopped", self.frame._ping_output.get("1.0", "end"))
+        self.assertIn("4", self.frame.status.text())
 
     @patch.object(network.tasks, "BackgroundTask")
     def test_action_guarded_requires_admin(self, fake_task):
