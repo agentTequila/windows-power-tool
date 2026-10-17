@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import tkinter as tk
+
+from power_tool.core import theme, widgets
 from power_tool.tools import speedup
+
+REAL_GUARD_ADMIN = widgets.guard_admin
 
 
 class TempTargetTests(unittest.TestCase):
@@ -205,6 +210,75 @@ class ProcessHelperTests(unittest.TestCase):
         fake_runner.run.assert_called_once()
         self.assertEqual(fake_state.call_count, 3)
         self.assertEqual(fake_sleep.call_count, 2)
+
+
+class CleanRestartBrowsersTests(unittest.TestCase):
+    @patch.object(speedup, "runner")
+    @patch.object(speedup, "is_process_running", return_value=True)
+    def test_was_running_closes_cleans_and_relaunches(self, _running, fake_runner):
+        with patch.object(speedup, "browser_cleanup_targets", return_value=[Path("x")]), \
+             patch.object(speedup, "remove_target", return_value=(True, 10)) as fake_rm, \
+             patch.object(speedup, "close_process") as fake_close, \
+             patch.object(speedup, "browser_launch_command", return_value=["C:\\b.exe"]):
+            result = speedup.clean_and_restart(["Chrome"])
+        fake_close.assert_called_once_with("chrome.exe")
+        fake_rm.assert_called_once()
+        self.assertEqual(result["launched"], ["Chrome"])
+
+    @patch.object(speedup, "runner")
+    @patch.object(speedup, "is_process_running", return_value=False)
+    def test_not_running_still_cleans_and_launches(self, _running, fake_runner):
+        with patch.object(speedup, "browser_cleanup_targets", return_value=[]), \
+             patch.object(speedup, "browser_launch_command", return_value=["C:\\b.exe"]):
+            result = speedup.clean_and_restart(["Firefox"])
+        self.assertEqual(result["cleaned"], ["Firefox"])
+        self.assertEqual(result["launched"], ["Firefox"])
+
+    def test_missing_exe_reported_not_launched(self):
+        with patch.object(speedup, "is_process_running", return_value=False), \
+             patch.object(speedup, "browser_cleanup_targets", return_value=[]), \
+             patch.object(speedup, "browser_launch_command", return_value=None):
+            result = speedup.clean_and_restart(["Edge"])
+        self.assertEqual(result["not_found"], ["Edge"])
+
+
+class FrameSetupMixin:
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tk.Tk()
+        cls.root.withdraw()
+        theme.apply_theme(cls.root, "dark")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def setUp(self):
+        self.frame = speedup.SpeedupFrame(self.root)
+
+
+class CleanRestartFrameTests(FrameSetupMixin, unittest.TestCase):
+    def test_button_label_is_clean_and_restart(self):
+        text = str(self.frame._clean_restart_button.cget("text"))
+        self.assertIn("Clean & restart", text)
+
+    @patch.object(speedup.tasks, "BackgroundTask")
+    def test_clean_restart_guarded_requires_admin(self, fake_task):
+        self.frame._browser_vars["Chrome"].set(True)
+        with patch.object(speedup.widgets, "guard_admin", REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False):
+            self.frame._clean_restart_browsers()
+        fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
+
+    @patch.object(speedup.tasks, "BackgroundTask")
+    def test_empty_selection_errors(self, fake_task):
+        self.assertEqual(self.frame._selected_browsers(), [])
+        self.frame._clean_restart_browsers()
+        fake_task.assert_not_called()
+        self.assertIn("Select at least one browser",
+                      self.frame.status.text())
 
 
 if __name__ == "__main__":

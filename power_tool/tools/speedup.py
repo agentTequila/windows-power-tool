@@ -2,6 +2,7 @@ import os
 import shutil
 import time
 import tkinter as tk
+from functools import partial
 from pathlib import Path
 from tkinter import ttk
 from typing import Mapping
@@ -184,6 +185,35 @@ def close_process(image: str) -> None:
         time.sleep(0.25)
 
 
+def clean_and_restart(selected: list[str]) -> dict:
+    """Close each selected browser, clear its cache/cookies, then relaunch it.
+
+    Browsers are relaunched even if they weren't running before; ones whose
+    executable can't be found are reported in "not_found" instead.
+    """
+    env = dict(os.environ)
+    cleaned: list[str] = []
+    launched: list[str] = []
+    not_found: list[str] = []
+    for browser in selected:
+        image = BROWSER_PROCESSES[browser]
+        if is_process_running(image):
+            close_process(image)
+        for target in browser_cleanup_targets(browser, env):
+            remove_target(target)
+        cleaned.append(browser)
+        command = browser_launch_command(browser, env)
+        if command:
+            try:
+                runner.start_detached(command)
+            except OSError:
+                pass
+            launched.append(browser)
+        else:
+            not_found.append(browser)
+    return {"cleaned": cleaned, "launched": launched, "not_found": not_found}
+
+
 class SpeedupFrame(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, padding=16)
@@ -228,8 +258,10 @@ class SpeedupFrame(ttk.Frame):
         self._cancel_countdown = None
         self._seconds_left = 0
 
-        ttk.Button(self, text="Restart selected browsers",
-                   command=self._restart_browsers).pack(anchor="w", pady=(0, 4))
+        self._clean_restart_button = ttk.Button(
+            self, text="Clean & restart selected browsers",
+            command=self._clean_restart_browsers)
+        self._clean_restart_button.pack(anchor="w", pady=(0, 4))
 
         self.status = widgets.StatusPane(self)
         self.status.pack(fill="x", pady=(10, 0))
@@ -316,6 +348,7 @@ class SpeedupFrame(ttk.Frame):
     def _set_buttons_state(self, state: str) -> None:
         self._clean_button.configure(state=state)
         self._reboot_button.configure(state=state)
+        self._clean_restart_button.configure(state=state)
 
     def _start_countdown(self, summary: str) -> None:
         self._seconds_left = 10
@@ -347,23 +380,34 @@ class SpeedupFrame(ttk.Frame):
                 f"Could not cancel reboot: "
                 f"{result.stderr.strip() or result.stdout.strip()}")
 
-    def _restart_browsers(self) -> None:
+    def _clean_restart_browsers(self) -> None:
         selected = self._selected_browsers()
         if not selected:
             self.status.set_error("Select at least one browser first.")
             return
-        for browser in selected:
-            image = BROWSER_PROCESSES[browser]
-            if is_process_running(image):
-                close_process(image)
-        for browser in selected:
-            command = browser_launch_command(browser, dict(os.environ))
-            if command:
-                try:
-                    runner.start_detached(command)
-                except OSError:
-                    pass
-        self.status.set_success(f"Browsers restarted: {', '.join(selected)}.")
+        if not widgets.guard_admin(self.status):
+            return
+        self._set_buttons_state("disabled")
+        self.status.set_working(
+            f"Cleaning and restarting: {', '.join(selected)}...")
+        tasks.BackgroundTask(
+            self,
+            work=partial(clean_and_restart, selected),
+            on_done=self._on_clean_restart_done,
+            on_error=self._on_clean_restart_error,
+        ).start()
+
+    def _on_clean_restart_done(self, result: dict) -> None:
+        self._set_buttons_state("normal")
+        summary = "Cleaned and restarted: " + ", ".join(result["launched"]) + "."
+        if result["not_found"]:
+            summary += (" · " + ", ".join(result["not_found"])
+                        + " executable not found")
+        self.status.set_success(summary)
+
+    def _on_clean_restart_error(self, exc: BaseException) -> None:
+        self._set_buttons_state("normal")
+        self.status.set_error(f"Clean & restart failed: {exc}")
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:
