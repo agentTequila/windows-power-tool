@@ -280,6 +280,24 @@ class CleanRestartFrameTests(FrameSetupMixin, unittest.TestCase):
         self.assertIn("Select at least one browser",
                       self.frame.status.text())
 
+    def test_done_degenerate_when_nothing_launched(self):
+        self.frame._on_clean_restart_done(
+            {"cleaned": ["Chrome", "Edge"], "launched": [],
+             "not_found": ["Chrome", "Edge"]})
+        text = self.frame.status.text()
+        self.assertIn("No browsers could be started", text)
+        self.assertIn("Chrome, Edge", text)
+        self.assertIn("Cleaned", text)
+        self.assertNotIn("Cleaned and restarted: .", text)
+
+    def test_done_reports_launched_and_not_found(self):
+        self.frame._on_clean_restart_done(
+            {"cleaned": ["Chrome", "Edge"], "launched": ["Chrome"],
+             "not_found": ["Edge"]})
+        text = self.frame.status.text()
+        self.assertIn("Cleaned and restarted: Chrome.", text)
+        self.assertIn("Edge executable not found", text)
+
 
 if __name__ == "__main__":
     unittest.main()

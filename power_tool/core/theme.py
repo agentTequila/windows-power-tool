@@ -97,6 +97,8 @@ def _apply_tick_indicator(style: ttk.Style, root: tk.Misc, name: str,
     if not isinstance(cache, dict):
         cache = {}
         root._wpt_check_images = cache
+    # Permanent per-name cache by design: ttk elements pin the original
+    # images, so regenerating them kills rendering (the original bug).
     if name in cache:
         images = cache[name]
     else:

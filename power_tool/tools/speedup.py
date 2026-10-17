@@ -399,10 +399,21 @@ class SpeedupFrame(ttk.Frame):
 
     def _on_clean_restart_done(self, result: dict) -> None:
         self._set_buttons_state("normal")
-        summary = "Cleaned and restarted: " + ", ".join(result["launched"]) + "."
-        if result["not_found"]:
-            summary += (" · " + ", ".join(result["not_found"])
-                        + " executable not found")
+        launched = ", ".join(result["launched"])
+        if launched:
+            summary = f"Cleaned and restarted: {launched}."
+            if result["not_found"]:
+                summary += (" · " + ", ".join(result["not_found"])
+                            + " executable not found")
+        else:
+            # Degenerate: nothing launched — report what failed (and what was
+            # still cleaned) instead of a bare "Cleaned and restarted: .".
+            summary = "No browsers could be started"
+            if result["not_found"]:
+                summary += ": " + ", ".join(result["not_found"])
+            summary += "."
+            if result["cleaned"]:
+                summary += " · Cleaned: " + ", ".join(result["cleaned"]) + "."
         self.status.set_success(summary)
 
     def _on_clean_restart_error(self, exc: BaseException) -> None:

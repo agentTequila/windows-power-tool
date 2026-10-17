@@ -201,9 +201,16 @@ class ConsoleFrame(ttk.Frame):
             return
         if self._stop_event is not None:
             self._stop_event.set()
-        self.status.set_working("Stopping — killing the command tree...")
-        runner.run(["taskkill", "/PID", str(self._pid), "/T", "/F"],
-                   timeout=15)
+        pid = self._pid
+        # taskkill can block up to 15s — never run it on the GUI thread.
+        threading.Thread(
+            target=lambda: runner.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"], timeout=15),
+            daemon=True).start()
+        # Finalize now instead of waiting for the reader's "done" sentinel:
+        # a grandchild can hold stdout open after taskkill, so the sentinel
+        # may never arrive. _finish is idempotent (guarded by _running).
+        self._finish(None)
 
     def _drain(self):
         finalized = False
@@ -218,10 +225,14 @@ class ConsoleFrame(ttk.Frame):
             elif kind == "done":
                 self._finish(item[1])
                 finalized = True
-        if not finalized:
+        # After a Stop finalize, drain any queued lines one last time, then
+        # stop rescheduling — the (abandoned, daemon) reader may never EOF.
+        if not finalized and (self._running or not self._queue.empty()):
             self.after(100, self._drain)
 
     def _finish(self, returncode):
+        if not self._running:
+            return  # already finalized (e.g. by Stop) — ignore late "done"
         self._set_busy(False)  # re-enable FIRST so the UI never wedges
         self._running = False
         self._proc = None
@@ -244,7 +255,7 @@ class ConsoleFrame(ttk.Frame):
 
     def _open_cmd(self):
         cwd = os.environ.get("USERPROFILE") or None
-        runner.start_detached(["cmd.exe"], cwd=cwd)
+        runner.start_detached(["cmd.exe", "/k"], cwd=cwd)
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:

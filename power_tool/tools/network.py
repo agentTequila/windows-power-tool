@@ -22,7 +22,11 @@ def ping_once_args(host: str) -> list[str]:
 
 
 def run_ping_session(host: str, stop_event, put) -> dict:
-    """Ping `host` until stop_event is set; never raises past `put("done")`."""
+    """Ping `host` until stop_event is set.
+
+    The `finally` emits the done sentinel first, then any exception
+    propagates past it (dormant in practice: runner.run never raises).
+    """
     sent = 0
     lost = 0
     try:
@@ -189,6 +193,9 @@ class NetworkFrame(ttk.Frame):
         self.after(100, self._drain_ping)
 
     def _stop_ping(self) -> None:
+        """Request a stop; it takes effect after the current in-flight ping
+        iteration (bounded ≤ ~8s by the runner timeout, typically ~2s) —
+        the ping process is not killed mid-ping."""
         if self._ping_stop is not None:
             self._ping_stop.set()
         self.status.set_working(

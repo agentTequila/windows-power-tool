@@ -150,33 +150,67 @@ class ConsoleFrameTests(unittest.TestCase):
         self.assertEqual(
             str(self.frame._command_entry.cget("state")), "normal")
 
-    def test_stop_uses_taskkill_on_tree(self):
+    def test_stop_dispatches_taskkill_off_the_gui_thread(self):
         proc = _fake_proc()
         with patch.object(console.subprocess, "Popen", return_value=proc), \
-             patch.object(console.threading, "Thread"), \
+             patch.object(console.threading, "Thread") as fake_thread, \
              patch.object(console, "runner") as fake_runner:
             self.frame._command_entry.insert(0, "ping -t 8.8.8.8")
             self.frame._run()
+            stop_event = self.frame._stop_event
             self.frame._stop()
+            # taskkill must NOT run synchronously on the calling (GUI) thread
+            fake_runner.run.assert_not_called()
+            # ...it is dispatched to a background thread instead (last Thread
+            # construction is the kill; _run's reader thread came first)
+            target = fake_thread.call_args.kwargs["target"]
+            target()
             fake_runner.run.assert_called_once_with(
                 ["taskkill", "/PID", "4321", "/T", "/F"], timeout=15)
-            self.assertTrue(self.frame._stop_event.is_set())
+            self.assertTrue(stop_event.is_set())
 
-    def test_stop_after_kill_finishes_via_sentinel(self):
+    def test_stop_finalizes_ui_without_reader_sentinel(self):
+        proc = _fake_proc()
+        with patch.object(console.subprocess, "Popen", return_value=proc), \
+             patch.object(console.threading, "Thread"), \
+             patch.object(console, "runner"):
+            self.frame._command_entry.insert(0, "ping -t 8.8.8.8")
+            self.frame._run()
+            # reader thread never runs: no "done" sentinel will ever arrive
+            self.frame._stop()
+            self.assertEqual(str(self.frame._run_button.cget("text")), "Run")
+            self.assertEqual(
+                str(self.frame._run_button.cget("state")), "normal")
+            self.assertEqual(
+                str(self.frame._command_entry.cget("state")), "normal")
+            self.assertIn("stopped", self.frame.status.text())
+            self.assertFalse(self.frame._running)
+            # a second Stop is a safe no-op
+            self.frame._stop()
+            # a late reader sentinel must not double-finalize
+            self.frame._queue.put(("done", 1))
+            self.frame._drain()
+            self.assertIn("stopped", self.frame.status.text())
+            self.assertNotIn("exited with code",
+                             self.frame.status.text())
+
+    def test_late_reader_sentinel_after_stop_does_not_refinalize(self):
         proc = _fake_proc(rc=1)
         with patch.object(console.subprocess, "Popen", return_value=proc), \
              patch.object(console.threading, "Thread") as fake_thread, \
              patch.object(console, "runner"):
             self.frame._command_entry.insert(0, "ping -t 8.8.8.8")
             self.frame._run()
-            self.frame._stop()
-            kwargs = fake_thread.call_args.kwargs
-            kwargs["target"](*kwargs["args"])
+            reader = fake_thread.call_args.kwargs  # _run's reader thread
+            self.frame._stop()  # finalizes immediately, no sentinel needed
+            # real reader finally reaches EOF and emits its "done" late
+            reader["target"](*reader["args"])
         self.frame._drain()
         self.assertEqual(str(self.frame._run_button.cget("text")), "Run")
         self.assertEqual(
             str(self.frame._run_button.cget("state")), "normal")
         self.assertIn("stopped", self.frame.status.text())
+        self.assertNotIn("exited with code", self.frame.status.text())
 
     def test_history_up_down_recall(self):
         self._run_and_finish("ipconfig /flushdns")
@@ -224,7 +258,7 @@ class ConsoleFrameTests(unittest.TestCase):
             fake_runner.reset_mock()
             self.frame._open_cmd()
             fake_runner.start_detached.assert_called_once_with(
-                ["cmd.exe"], cwd=home)
+                ["cmd.exe", "/k"], cwd=home)
 
 
 if __name__ == "__main__":
