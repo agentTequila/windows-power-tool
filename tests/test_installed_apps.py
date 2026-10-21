@@ -581,5 +581,74 @@ class InstalledAppsFrameTests(unittest.TestCase):
             self.assertIn("skipped", self.frame.status.text())
 
 
+class LeftoverDialogTests(unittest.TestCase):
+    """Constructs the real modal dialog; wait_window is satisfied by
+    registering probe/safety `after` callbacks BEFORE the synchronous
+    constructor call — they fire while wait_window pumps events."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tk.Tk()
+        cls.root.withdraw()
+        theme.apply_theme(cls.root, "dark")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def test_dialog_renders_rows_and_keeps_contract(self):
+        findings = [
+            {"kind": "folder", "confidence": "high",
+             "path": Path(r"C:\Temp\Firefox"),
+             "label": r"C:\Temp\Firefox"},
+            {"kind": "registry", "confidence": "low",
+             "path": r"SOFTWARE\X\Firefox",
+             "label": r"SOFTWARE\X\Firefox"},
+        ]
+        received = []
+        holder = {}
+
+        def remove_cb(selected):
+            received.append(selected)
+
+        def find_dialog():
+            # The Toplevel exists in Tk as soon as super().__init__ runs,
+            # even though the constructor (blocked in wait_window) has not
+            # returned a Python handle yet.
+            for widget in self.root.winfo_children():
+                if isinstance(widget, installed_apps.LeftoverDialog):
+                    return widget
+            return None
+
+        def probe():
+            # Runs inside wait_window's event pump: snapshot state, then
+            # take the _do_remove path (which destroys the dialog and
+            # releases wait_window).
+            dialog = find_dialog()
+            holder["vars"] = [var.get() for var in dialog._vars]
+            holder["bg"] = str(dialog.cget("background"))
+            dialog._do_remove()
+
+        def safety():
+            # Fires only if probe failed: destroy the dialog so
+            # wait_window returns and the test fails loudly instead of
+            # deadlocking. No-op on the happy path.
+            dialog = find_dialog()
+            if dialog is not None and dialog.winfo_exists():
+                dialog.destroy()
+
+        self.root.after(2000, safety)
+        self.root.after(150, safety)
+        self.root.after(100, probe)
+        # Synchronous construction: wait_window pumps events, so the
+        # callbacks above fire mid-constructor.
+        installed_apps.LeftoverDialog(self.root, findings,
+                                      on_remove=remove_cb)
+
+        self.assertEqual(holder["vars"], [True, False])
+        self.assertEqual(holder["bg"], theme.current_palette()["bg"])
+        self.assertEqual(received, [[findings[0]]])
+
+
 if __name__ == "__main__":
     unittest.main()

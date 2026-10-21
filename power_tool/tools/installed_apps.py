@@ -8,7 +8,7 @@ from functools import partial
 from pathlib import Path
 from tkinter import filedialog, ttk
 
-from power_tool.core import runner, tasks, widgets
+from power_tool.core import runner, tasks, theme, widgets
 
 UNINSTALL_PATH = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
 
@@ -498,27 +498,56 @@ class InstalledAppsFrame(ttk.Frame):
 class LeftoverDialog(tk.Toplevel):
     def __init__(self, parent, findings: list[dict], on_remove):
         super().__init__(parent)
+        p = theme.current_palette()
         self.title("Remove leftover items")
         self.transient(parent)
         self.grab_set()
+        self.configure(background=p["bg"])
+        self.minsize(480, 0)
         self._findings = findings
         self._on_remove = on_remove
         self._vars: list[tk.BooleanVar] = []
+        # Panel rows need a checkbutton matching the panel background;
+        # the theme only defines TCheckbutton on the window background.
+        # The dialog is modal and short-lived, so configuring the style
+        # here (with the palette captured once) is enough.
+        style = ttk.Style(self)
+        style.configure("Panel.TCheckbutton", background=p["panel"],
+                        foreground=p["fg"])
+        style.map("Panel.TCheckbutton",
+                  background=[("active", p["panel2"])],
+                  foreground=[("active", p["fg"]),
+                              ("disabled", p["dim"])])
         ttk.Label(
-            self,
-            text="Leftover items found. Uncheck anything you want to keep.",
-        ).pack(anchor="w", padx=12, pady=(10, 6))
+            self, wraplength=460,
+            text=f"{len(findings)} items found — uncheck anything you "
+                 f"want to keep.",
+        ).pack(anchor="w", padx=14, pady=(12, 8))
         for finding, checked in zip(findings, default_checked(findings)):
             var = tk.BooleanVar(value=checked)
             self._vars.append(var)
-            ttk.Checkbutton(self, text=finding["label"],
-                            variable=var).pack(anchor="w", padx=24, pady=2)
-        buttons = ttk.Frame(self)
-        buttons.pack(anchor="e", padx=12, pady=(10, 12))
-        ttk.Button(buttons, text="Close", command=self.destroy).pack(
-            side="right", padx=(6, 0))
-        ttk.Button(buttons, text="Remove selected", style="Danger.TButton",
-                   command=self._do_remove).pack(side="right")
+            row = ttk.Frame(self, style="Panel.TFrame", padding=(10, 6))
+            row.pack(fill="x", padx=14, pady=3)
+            high = finding.get("confidence") == "high"
+            tk.Label(
+                row, text="HIGH" if high else "low",
+                fg=p["success"] if high else p["dim"],
+                background=p["panel"],
+                font=("Segoe UI", 8, "bold") if high else ("Segoe UI", 8),
+                padx=6,
+            ).pack(side="right", padx=(10, 0))
+            # finding["label"] already IS the path (folder path or
+            # registry key path), so it doubles as the dim path text.
+            ttk.Checkbutton(
+                row, text=finding["label"], variable=var,
+                style="Panel.TCheckbutton",
+            ).pack(side="left", fill="x", expand=True)
+        footer = ttk.Frame(self)
+        footer.pack(side="bottom", fill="x", padx=14, pady=(12, 14))
+        ttk.Button(footer, text="Remove selected", style="Danger.TButton",
+                   command=self._do_remove).pack(side="left")
+        ttk.Button(footer, text="Close", command=self.destroy).pack(
+            side="right")
         self.wait_window(self)
 
     def _do_remove(self) -> None:
