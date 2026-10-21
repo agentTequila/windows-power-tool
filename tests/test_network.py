@@ -386,6 +386,127 @@ class NetworkFrameTests(unittest.TestCase):
         self.assertIn("Run as administrator required",
                       self.frame.status.text())
 
+    def _static_entries(self):
+        return [self.frame._ip_entry, self.frame._mask_entry,
+                self.frame._gw_entry, self.frame._dns_entry,
+                self.frame._dns_alt_entry]
+
+    def test_mode_radio_toggles_field_state(self):
+        for entry in self._static_entries():
+            self.assertEqual(str(entry.cget("state")), "disabled")
+        self.frame._mode_var.set("Static")
+        self.frame._mode_changed()
+        for entry in self._static_entries():
+            self.assertEqual(str(entry.cget("state")), "normal")
+        self.frame._mode_var.set("DHCP")
+        self.frame._mode_changed()
+        for entry in self._static_entries():
+            self.assertEqual(str(entry.cget("state")), "disabled")
+
+    @patch.object(network.tasks, "BackgroundTask")
+    @patch.object(network, "runner")
+    def test_show_current_config_is_unguarded(self, fake_runner, fake_task):
+        fake_runner.run.return_value = runner.Result(0, "conf", "")
+        self.frame._adapters_loaded(["Ethernet"])
+        with patch.object(network.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False):
+            self.frame._show_config()
+        fake_task.return_value.start.assert_called_once()
+        kwargs = fake_task.call_args.kwargs
+        self.assertEqual(
+            kwargs["work"].args[0], "Ethernet")
+        kwargs["work"]()
+        self.assertEqual(
+            fake_runner.run.call_args.args[0],
+            ["netsh", "interface", "ipv4", "show", "config",
+             "name=Ethernet"])
+
+    @patch.object(network.tasks, "BackgroundTask")
+    def test_apply_requires_adapter_selection_warns(self, fake_task):
+        with patch.object(network.widgets, "confirm", return_value=True):
+            self.frame._apply()
+        fake_task.assert_not_called()
+        self.assertIn("Select an adapter", self.frame.status.text())
+        self.assertEqual(str(self.frame._apply_button.cget("style")),
+                         "Accent.TButton")
+
+    @patch.object(network.tasks, "BackgroundTask")
+    def test_apply_bad_ip_reports_error_without_task(self, fake_task):
+        self.frame._adapters_loaded(["Ethernet"])
+        self.frame._mode_var.set("Static")
+        self.frame._mode_changed()
+        self.frame._ip_entry.insert(0, "999.1.1.1")
+        self.frame._mask_entry.insert(0, "255.255.255.0")
+        self.frame._dns_entry.insert(0, "8.8.8.8")
+        with patch.object(network.widgets, "confirm", return_value=True):
+            self.frame._apply()
+        fake_task.assert_not_called()
+        self.assertIn("Invalid IP address", self.frame.status.text())
+
+    @patch.object(network.tasks, "BackgroundTask")
+    def test_apply_guarded_then_confirmed_before_running(self, fake_task):
+        self.frame._adapters_loaded(["Ethernet"])
+        # Phase 1: not admin -> guard blocks before confirm is even asked.
+        with patch.object(network.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             patch.object(network.widgets,
+                          "confirm", return_value=True) as fake_confirm:
+            self.frame._apply()
+        fake_task.assert_not_called()
+        fake_confirm.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
+        # Phase 2: admin, but confirmation declined -> no task.
+        with patch.object(network.widgets, "guard_admin",
+                          return_value=True), \
+             patch.object(network.widgets, "confirm", return_value=False):
+            self.frame._apply()
+        fake_task.assert_not_called()
+        self.assertIn("Cancelled", self.frame.status.text())
+        # Phase 3: admin + confirm -> task starts with the dhcp commands.
+        with patch.object(network.widgets, "guard_admin",
+                          return_value=True), \
+             patch.object(network.widgets,
+                          "confirm", return_value=True) as fake_confirm:
+            self.frame._apply()
+        kwargs = fake_task.call_args.kwargs
+        self.assertEqual(kwargs["work"].args[0],
+                         network.dhcp_commands("Ethernet"))
+        message = fake_confirm.call_args.args[2]
+        self.assertIn("netsh interface ipv4 set address name=Ethernet dhcp",
+                      message)
+        self.assertIn("netsh interface ipv4 set dns name=Ethernet dhcp",
+                      message)
+        self.assertEqual(
+            str(self.frame._apply_button.cget("state")), "disabled")
+        kwargs["on_done"]("$ netsh ...\nOk.")
+        self.assertEqual(str(self.frame._apply_button.cget("state")),
+                         "normal")
+        self.assertIn("IP configuration applied.",
+                      self.frame.status.text())
+
+    @patch.object(network.tasks, "BackgroundTask")
+    def test_refresh_populates_adapter_combo(self, fake_task):
+        with patch.object(network, "runner") as fake_runner:
+            fake_runner.run.return_value = runner.Result(
+                0, PARSE_ADAPTERS_SAMPLE, "")
+            self.frame._refresh_adapters()
+            kwargs = fake_task.call_args.kwargs
+            adapters = kwargs["work"]()
+            self.assertEqual(
+                fake_runner.run.call_args.args[0],
+                ["netsh", "interface", "show", "interface"])
+        self.assertEqual(
+            str(self.frame._refresh_button.cget("state")), "disabled")
+        kwargs["on_done"](adapters)
+        self.assertEqual(list(self.frame._adapter_combo.cget("values")),
+                         ["Ethernet", "Ethernet 2"])
+        self.assertEqual(self.frame._adapter_combo.get(), "Ethernet")
+        self.assertEqual(str(self.frame._refresh_button.cget("state")),
+                         "normal")
+
 
 if __name__ == "__main__":
     unittest.main()
