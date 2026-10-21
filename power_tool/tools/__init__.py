@@ -12,11 +12,11 @@ REGISTRY: list = [
     ]),
     ("Admin", [
         ("Network", network),
+        ("Console", console),
         ("Installed Apps", installed_apps),
         ("Users & Groups", users_groups),
         ("Processes", processes),
         ("Services", services),
-        ("Console", console),
     ]),
     ("System", [
         ("Disk & Cleanup", disk_cleanup),
