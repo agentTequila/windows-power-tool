@@ -58,6 +58,16 @@ class ConsoleFrameTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        # _run leaves self-rescheduling after(100, _drain) polls pending.
+        # Tcl's event queue is thread-wide: a later module that pumps events
+        # (e.g. a wait_window dialog) would fire these against the destroyed
+        # root — "invalid command name ..._drain" on stderr. Cancel each
+        # pending timer by id (`after cancel all` is a no-op in Tcl); the
+        # registered callback commands are left for destroy() to delete —
+        # Misc.after_cancel would delete them twice and blow up destroy.
+        tk_id = cls.root.tk
+        for after_id in tk_id.splitlist(tk_id.call("after", "info")):
+            tk_id.call("after", "cancel", after_id)
         cls.root.destroy()
 
     def setUp(self):

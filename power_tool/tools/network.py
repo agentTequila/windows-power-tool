@@ -129,7 +129,7 @@ def run_ping_session(host: str, stop_event, put, count: int = 10,
                 break
     finally:
         put(("done", {"sent": sent, "lost": lost, "count": count}))
-    return {"sent": sent, "lost": lost}
+    return {"sent": sent, "lost": lost, "count": count}
 
 
 def action_commands(name: str) -> list[list[str]]:
@@ -173,9 +173,11 @@ class NetworkFrame(ttk.Frame):
         ttk.Label(self, text="Network", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             self, wraplength=660, style="Dim.TLabel",
-            text="Fix everyday network problems: flush the DNS cache, "
-                 "release or renew the IP address, and ping a host. "
-                 "Output appears below each run.",
+            text="Networking acting up? Flush the DNS cache, renew the "
+                 "IP, or watch a ping stream by itself. The IP "
+                 "Configuration box below is where you flip an adapter "
+                 "between automatic and static addresses when DHCP "
+                 "isn't cutting it.",
         ).pack(anchor="w", pady=(6, 12))
 
         actions = ttk.Frame(self)
@@ -232,11 +234,14 @@ class NetworkFrame(ttk.Frame):
         mode_row.pack(fill="x", pady=(0, 6))
         ttk.Label(mode_row, text="Mode:").pack(side="left")
         self._mode_var = tk.StringVar(value="DHCP")
+        self._mode_radios = []
         for value, label in (("DHCP", "DHCP (automatic)"),
                              ("Static", "Static")):
-            ttk.Radiobutton(
+            radio = ttk.Radiobutton(
                 mode_row, text=label, value=value, variable=self._mode_var,
-                command=self._mode_changed).pack(side="left", padx=(8, 0))
+                command=self._mode_changed)
+            radio.pack(side="left", padx=(8, 0))
+            self._mode_radios.append(radio)
 
         fields = ttk.Frame(ip_section)
         fields.pack(fill="x", pady=(0, 6))
@@ -365,6 +370,20 @@ class NetworkFrame(ttk.Frame):
         for button in (self._refresh_button, self._show_config_button,
                        self._apply_button):
             button.configure(state=state)
+        # Inputs too — a ping shouldn't leave the host field editable.
+        for widget in (self._ping_entry, self._ping_count):
+            widget.configure(state=state)
+        self._adapter_combo.configure(
+            state="disabled" if busy else "readonly")
+        for radio in self._mode_radios:
+            radio.configure(state=state)
+        if busy:
+            for entry in (self._ip_entry, self._mask_entry, self._gw_entry,
+                          self._dns_entry, self._dns_alt_entry):
+                entry.configure(state="disabled")
+        else:
+            # Static entries are mode-governed: DHCP keeps them disabled.
+            self._mode_changed()
 
     def _append(self, text: str) -> None:
         self._output.configure(state="normal")

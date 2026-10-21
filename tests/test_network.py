@@ -103,6 +103,12 @@ class StaticCommandsTests(unittest.TestCase):
                                     "255.255.255.0", "",
                                     "8.8.8", "")
 
+    def test_static_validation_rejects_bad_dns_alt(self):
+        with self.assertRaises(ValueError):
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "",
+                                    "8.8.8.8", "8.8.8")
+
     def test_static_validation_rejects_bad_gateway(self):
         with self.assertRaises(ValueError):
             network.static_commands("Ethernet", "192.168.1.10",
@@ -152,7 +158,7 @@ class PingSessionTests(unittest.TestCase):
 
         result = network.run_ping_session("8.8.8.8", stop, put,
                                           count=2, interval=0)
-        self.assertEqual(result, {"sent": 2, "lost": 1})
+        self.assertEqual(result, {"sent": 2, "lost": 1, "count": 2})
 
     @patch.object(network, "runner")
     def test_done_event_payload(self, fake_runner):
@@ -335,6 +341,36 @@ class NetworkFrameTests(unittest.TestCase):
             str(self.frame._action_buttons["Flush DNS"].cget("state")),
             "disabled")
 
+    def test_busy_disables_input_widgets(self):
+        self.frame._ping_entry.insert(0, "8.8.8.8")
+        with patch.object(network.threading, "Thread") as fake_thread:
+            self.frame._start_ping()
+            fake_thread.return_value.start.assert_called_once()
+            # busy: every input widget is disabled, not just buttons
+            for widget in (self.frame._ping_entry, self.frame._ping_count,
+                           self.frame._adapter_combo):
+                self.assertEqual(str(widget.cget("state")), "disabled")
+            for radio in self.frame._mode_radios:
+                self.assertEqual(str(radio.cget("state")), "disabled")
+            for entry in self._static_entries():
+                self.assertEqual(str(entry.cget("state")), "disabled")
+        # finalize via the done drain
+        self.frame._ping_queue.put(("done", {"sent": 1, "lost": 0,
+                                             "count": 10}))
+        self.frame._drain_ping()
+        self.assertEqual(
+            str(self.frame._ping_button.cget("text")), "Start")
+        for widget in (self.frame._ping_entry, self.frame._ping_count):
+            self.assertEqual(str(widget.cget("state")), "normal")
+        # the readonly combo returns to readonly, not plain normal
+        self.assertEqual(str(self.frame._adapter_combo.cget("state")),
+                         "readonly")
+        for radio in self.frame._mode_radios:
+            self.assertEqual(str(radio.cget("state")), "normal")
+        # DHCP mode: static entries go back to their mode-governed state
+        for entry in self._static_entries():
+            self.assertEqual(str(entry.cget("state")), "disabled")
+
     def test_ping_empty_entry_reports_error_without_thread(self):
         with patch.object(network.threading, "Thread") as fake_thread:
             self.frame._start_ping()
@@ -345,18 +381,15 @@ class NetworkFrameTests(unittest.TestCase):
         self.assertEqual(str(self.frame._ping_count.get()), "10")
         self.frame._ping_entry.insert(0, "8.8.8.8")
         with patch.object(network.threading, "Thread") as fake_thread:
-            self.frame._ping_count.set("9999")
-            self.frame._start_ping()
-            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 120)
-            self.frame._ping_running = False  # reset the start guard
-            self.frame._ping_count.set("0")
-            self.frame._start_ping()
-            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 1)
-            self.frame._ping_running = False
-            self.frame._ping_count.set("abc")
-            self.frame._start_ping()
-            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 10)
-        self.assertEqual(fake_thread.call_count, 3)
+            cases = [("9999", 120), ("0", 1), ("-5", 1), ("121", 120),
+                     ("abc", 10)]
+            for raw, expected in cases:
+                self.frame._ping_running = False  # reset the start guard
+                self.frame._ping_count.set(raw)
+                self.frame._start_ping()
+                self.assertEqual(fake_thread.call_args.kwargs["args"][3],
+                                 expected, f"spinbox value {raw!r}")
+        self.assertEqual(fake_thread.call_count, len(cases))
 
     def test_drain_updates_stats_and_appends_lines(self):
         self.frame._ping_queue.put(("line", "Reply from 8.8.8.8: bytes=32"))
