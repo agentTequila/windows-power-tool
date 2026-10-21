@@ -24,6 +24,25 @@ class PingOnceArgsTests(unittest.TestCase):
             network.ping_once_args("   ")
 
 
+class FakePaceStop:
+    """Stand-in for threading.Event whose wait() records pacing calls."""
+
+    def __init__(self, wait_result=False):
+        self.waits = []
+        self._set = False
+        self._wait_result = wait_result
+
+    def is_set(self):
+        return self._set
+
+    def set(self):
+        self._set = True
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        return self._wait_result
+
+
 class PingSessionTests(unittest.TestCase):
     @patch.object(network, "runner")
     def test_ping_session_counts_timeouts_as_loss(self, fake_runner):
@@ -39,7 +58,8 @@ class PingSessionTests(unittest.TestCase):
             if item[0] == "stats" and item[1] == 2:
                 stop.set()
 
-        result = network.run_ping_session("8.8.8.8", stop, put)
+        result = network.run_ping_session("8.8.8.8", stop, put,
+                                          count=2, interval=0)
         self.assertEqual(result, {"sent": 2, "lost": 1})
 
     @patch.object(network, "runner")
@@ -51,8 +71,53 @@ class PingSessionTests(unittest.TestCase):
             if item[0] == "stats":
                 stop.set()
 
-        result = network.run_ping_session("10.255.255.1", stop, put)
+        result = network.run_ping_session("10.255.255.1", stop, put,
+                                          count=1, interval=0)
         self.assertEqual(result["lost"], 1)
+
+    @patch.object(network, "runner")
+    def test_ping_session_respects_count(self, fake_runner):
+        fake_runner.run.side_effect = [
+            runner.Result(0, "Reply from 8.8.8.8: bytes=32", ""),
+            runner.Result(0, "Reply from 8.8.8.8: bytes=32", ""),
+            runner.Result(0, "Reply from 8.8.8.8: bytes=32", ""),
+        ]
+        stop = threading.Event()
+        events = []
+        network.run_ping_session("8.8.8.8", stop, events.append,
+                                 count=3, interval=0)
+        self.assertEqual(fake_runner.run.call_count, 3)
+        done = [item for item in events if item[0] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0][1]["count"], 3)
+        self.assertEqual(done[0][1]["sent"], 3)
+
+    @patch.object(network, "runner")
+    def test_ping_session_paces_with_event_wait(self, fake_runner):
+        fake_runner.run.side_effect = [runner.Result(0, "ok", "")] * 4
+        stop = FakePaceStop(wait_result=False)
+        events = []
+        network.run_ping_session("8.8.8.8", stop, events.append,
+                                 count=4, interval=0.5)
+        self.assertEqual(stop.waits, [0.5, 0.5, 0.5])
+        done = [item for item in events if item[0] == "done"]
+        self.assertEqual(len(done), 1)
+
+    @patch.object(network, "runner")
+    def test_ping_session_stop_during_pace_breaks(self, fake_runner):
+        fake_runner.run.side_effect = [
+            runner.Result(1, "Request timed out.", ""),
+            runner.Result(1, "Request timed out.", ""),
+        ]
+        stop = FakePaceStop(wait_result=True)
+        events = []
+        network.run_ping_session("10.255.255.1", stop, events.append,
+                                 count=5, interval=2.0)
+        self.assertEqual(fake_runner.run.call_count, 1)
+        self.assertEqual(stop.waits, [2.0])
+        done = [item for item in events if item[0] == "done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0][1], {"sent": 1, "lost": 1, "count": 5})
 
 
 class ActionCommandsTests(unittest.TestCase):
@@ -183,6 +248,23 @@ class NetworkFrameTests(unittest.TestCase):
             self.frame._start_ping()
         fake_thread.assert_not_called()
         self.assertIn("host name", self.frame.status.text())
+
+    def test_ping_count_spinbox_defaults_and_clamps(self):
+        self.assertEqual(str(self.frame._ping_count.get()), "10")
+        self.frame._ping_entry.insert(0, "8.8.8.8")
+        with patch.object(network.threading, "Thread") as fake_thread:
+            self.frame._ping_count.set("9999")
+            self.frame._start_ping()
+            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 120)
+            self.frame._ping_running = False  # reset the start guard
+            self.frame._ping_count.set("0")
+            self.frame._start_ping()
+            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 1)
+            self.frame._ping_running = False
+            self.frame._ping_count.set("abc")
+            self.frame._start_ping()
+            self.assertEqual(fake_thread.call_args.kwargs["args"][3], 10)
+        self.assertEqual(fake_thread.call_count, 3)
 
     def test_drain_updates_stats_and_appends_lines(self):
         self.frame._ping_queue.put(("line", "Reply from 8.8.8.8: bytes=32"))

@@ -21,16 +21,23 @@ def ping_once_args(host: str) -> list[str]:
     return ["ping", "-n", "1", "-w", "2000", cleaned]
 
 
-def run_ping_session(host: str, stop_event, put) -> dict:
-    """Ping `host` until stop_event is set.
+def run_ping_session(host: str, stop_event, put, count: int = 10,
+                     interval: float = 1.0) -> dict:
+    """Ping `host` at most `count` times, pacing between pings.
 
-    The `finally` emits the done sentinel first, then any exception
-    propagates past it (dormant in practice: runner.run never raises).
+    After each non-final iteration the worker paces with
+    `stop_event.wait(interval)` (never `time.sleep`), so Stop takes
+    effect immediately, even mid-pace. The `finally` emits the done
+    sentinel exactly once — payload gains the planned `count` — then any
+    exception propagates past it (dormant in practice: runner.run never
+    raises).
     """
     sent = 0
     lost = 0
     try:
-        while not stop_event.is_set():
+        for _ in range(count):
+            if stop_event.is_set():
+                break
             result = runner.run(ping_once_args(host), timeout=8)
             sent += 1
             if (result.returncode != 0
@@ -45,8 +52,10 @@ def run_ping_session(host: str, stop_event, put) -> dict:
             for line in lines:
                 put(("line", line))
             put(("stats", sent, lost))
+            if sent < count and stop_event.wait(interval):
+                break
     finally:
-        put(("done", {"sent": sent, "lost": lost}))
+        put(("done", {"sent": sent, "lost": lost, "count": count}))
     return {"sent": sent, "lost": lost}
 
 
@@ -92,13 +101,16 @@ class NetworkFrame(ttk.Frame):
         ttk.Label(ping_row, text="Live ping:").grid(row=0, column=0, sticky="w")
         self._ping_entry = ttk.Entry(ping_row, width=30)
         self._ping_entry.grid(row=0, column=1, padx=8)
+        self._ping_count = ttk.Spinbox(ping_row, from_=1, to=120, width=5)
+        self._ping_count.set("10")
+        self._ping_count.grid(row=0, column=2, padx=8)
         self._ping_button = ttk.Button(
             ping_row, text="Start", style="Accent.TButton",
             command=self._start_ping)
-        self._ping_button.grid(row=0, column=2)
+        self._ping_button.grid(row=0, column=3)
         self._ping_stats = ttk.Label(
             ping_row, style="Dim.TLabel", text="Pinged 0 · lost 0 · loss 0%")
-        self._ping_stats.grid(row=0, column=3, padx=(10, 0))
+        self._ping_stats.grid(row=0, column=4, padx=(10, 0))
         self._ping_queue = queue.Queue()
         self._ping_stop = None
         self._ping_running = False
@@ -174,6 +186,10 @@ class NetworkFrame(ttk.Frame):
         except ValueError:
             self.status.set_error("Enter a host name or IP address to ping.")
             return
+        try:
+            count = max(1, min(120, int(self._ping_count.get())))
+        except (TypeError, ValueError):
+            count = 10  # defensive: non-integer input falls back to default
         self._ping_queue = queue.Queue()
         self._ping_stop = threading.Event()
         self._ping_running = True
@@ -188,12 +204,13 @@ class NetworkFrame(ttk.Frame):
         self.status.set_working(f"Pinging {host} — streaming replies...")
         threading.Thread(
             target=run_ping_session,
-            args=(host, self._ping_stop, self._ping_queue.put),
+            args=(host, self._ping_stop, self._ping_queue.put, count),
             daemon=True).start()
         self.after(100, self._drain_ping)
 
     def _stop_ping(self) -> None:
-        """Request a stop; it takes effect after the current in-flight ping
+        """Request a stop; it takes effect instantly while pacing between
+        pings (stop_event.wait), or after the current in-flight ping
         iteration (bounded ≤ ~8s by the runner timeout, typically ~2s) —
         the ping process is not killed mid-ping."""
         if self._ping_stop is not None:
