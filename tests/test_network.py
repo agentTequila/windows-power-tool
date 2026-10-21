@@ -24,6 +24,98 @@ class PingOnceArgsTests(unittest.TestCase):
             network.ping_once_args("   ")
 
 
+PARSE_ADAPTERS_SAMPLE = (
+    "\n"
+    "Admin State    State          Type             Interface Name\n"
+    "--------------------------------------------------------------\n"
+    "Enabled        Connected      Dedicated        Ethernet\n"
+    "Enabled        Disconnected   Dedicated        Ethernet 2\n"
+    "Enabled        Disconnected   Dedicated        Ethernet 2\n"
+)
+
+
+class ParseAdaptersTests(unittest.TestCase):
+    def test_parse_adapters_sample_table(self):
+        self.assertEqual(network.parse_adapters(PARSE_ADAPTERS_SAMPLE),
+                         ["Ethernet", "Ethernet 2"])
+
+    def test_parse_adapters_skips_headers_and_blanks(self):
+        sample = (
+            "\n"
+            "Admin State    State          Type             Interface Name\n"
+            "\n"
+            "--------------------------------------------------------------\n"
+            "Enabled        Connected      Dedicated        Loopback\n"
+        )
+        self.assertEqual(network.parse_adapters(sample), ["Loopback"])
+
+
+class DhcpCommandsTests(unittest.TestCase):
+    def test_dhcp_commands_exact(self):
+        self.assertEqual(
+            network.dhcp_commands("Ethernet 2"),
+            [["netsh", "interface", "ipv4", "set", "address",
+              "name=Ethernet 2", "dhcp"],
+             ["netsh", "interface", "ipv4", "set", "dns",
+              "name=Ethernet 2", "dhcp"]])
+
+
+class StaticCommandsTests(unittest.TestCase):
+    def test_static_commands_exact_with_gateway(self):
+        self.assertEqual(
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "192.168.1.1",
+                                    "8.8.8.8", "8.8.4.4"),
+            [["netsh", "interface", "ipv4", "set", "address",
+              "name=Ethernet", "static", "192.168.1.10",
+              "255.255.255.0", "192.168.1.1"],
+             ["netsh", "interface", "ipv4", "set", "dns",
+              "name=Ethernet", "static", "8.8.8.8"],
+             ["netsh", "interface", "ipv4", "add", "dns",
+              "name=Ethernet", "8.8.4.4", "index=2"]])
+
+    def test_static_commands_blank_gateway_none(self):
+        self.assertEqual(
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "",
+                                    "1.1.1.1", ""),
+            [["netsh", "interface", "ipv4", "set", "address",
+              "name=Ethernet", "static", "192.168.1.10",
+              "255.255.255.0", "gateway=none"],
+             ["netsh", "interface", "ipv4", "set", "dns",
+              "name=Ethernet", "static", "1.1.1.1"]])
+
+    def test_static_validation_rejects_bad_ip(self):
+        with self.assertRaises(ValueError):
+            network.static_commands("Ethernet", "999.1.1.1",
+                                    "255.255.255.0", "192.168.1.1",
+                                    "8.8.8.8", "")
+
+    def test_static_validation_rejects_bad_mask(self):
+        with self.assertRaises(ValueError):
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.0", "",
+                                    "8.8.8.8", "")
+
+    def test_static_validation_rejects_bad_dns(self):
+        with self.assertRaises(ValueError):
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "",
+                                    "8.8.8", "")
+
+    def test_static_validation_rejects_bad_gateway(self):
+        with self.assertRaises(ValueError):
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "not-an-ip",
+                                    "8.8.8.8", "")
+
+    def test_static_requires_dns_primary(self):
+        with self.assertRaises(ValueError) as ctx:
+            network.static_commands("Ethernet", "192.168.1.10",
+                                    "255.255.255.0", "", "", "")
+        self.assertIn("DNS server is required", str(ctx.exception))
+
+
 class FakePaceStop:
     """Stand-in for threading.Event whose wait() records pacing calls."""
 

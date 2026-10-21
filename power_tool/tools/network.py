@@ -1,4 +1,6 @@
+import ipaddress
 import queue
+import re
 import threading
 import tkinter as tk
 from functools import partial
@@ -19,6 +21,77 @@ def ping_once_args(host: str) -> list[str]:
     if not cleaned:
         raise ValueError("host is empty")
     return ["ping", "-n", "1", "-w", "2000", cleaned]
+
+
+def parse_adapters(text: str) -> list[str]:
+    """Pull interface names from `netsh interface show interface` output.
+
+    Blank lines and the header (it mentions "Admin") are skipped, and the
+    name is the field after the last run of 2+ spaces, so multi-word
+    names like "Ethernet 2" come through whole. Rows repeat and are
+    deduped, first occurrence first.
+    """
+    adapters = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or "Admin" in stripped:
+            continue
+        name = re.split(r"\s{2,}", stripped)[-1].strip()
+        if not name or name.replace("-", "") == "":
+            continue  # the dashed rule under the header, minus its padding
+        if name not in adapters:
+            adapters.append(name)
+    return adapters
+
+
+def dhcp_commands(adapter: str) -> list[list[str]]:
+    return [
+        ["netsh", "interface", "ipv4", "set", "address",
+         f"name={adapter}", "dhcp"],
+        ["netsh", "interface", "ipv4", "set", "dns",
+         f"name={adapter}", "dhcp"],
+    ]
+
+
+def _validated_ipv4(value: str, label: str) -> str:
+    cleaned = str(value).strip()
+    try:
+        ipaddress.IPv4Address(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {label}: {cleaned!r}") from exc
+    return cleaned
+
+
+def static_commands(adapter: str, ip: str, mask: str, gateway: str,
+                    dns_primary: str, dns_alt: str) -> list[list[str]]:
+    primary = str(dns_primary).strip()
+    if not primary:
+        raise ValueError("DNS server is required")
+    address = _validated_ipv4(ip, "IP address")
+    clean_mask = str(mask).strip()
+    clean_gateway = str(gateway).strip()
+    if clean_gateway:
+        clean_gateway = _validated_ipv4(clean_gateway, "gateway")
+    else:
+        clean_gateway = "gateway=none"
+    primary = _validated_ipv4(primary, "DNS server")
+    alt = ""
+    if str(dns_alt).strip():
+        alt = _validated_ipv4(dns_alt, "DNS server")
+    try:
+        ipaddress.IPv4Network(f"{address}/{clean_mask}", strict=False)
+    except ValueError as exc:
+        raise ValueError(f"Invalid subnet mask: {clean_mask!r}") from exc
+    commands = [
+        ["netsh", "interface", "ipv4", "set", "address",
+         f"name={adapter}", "static", address, clean_mask, clean_gateway],
+        ["netsh", "interface", "ipv4", "set", "dns",
+         f"name={adapter}", "static", primary],
+    ]
+    if alt:
+        commands.append(["netsh", "interface", "ipv4", "add", "dns",
+                         f"name={adapter}", alt, "index=2"])
+    return commands
 
 
 def run_ping_session(host: str, stop_event, put, count: int = 10,
