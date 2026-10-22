@@ -186,6 +186,15 @@ def gather() -> dict:
     return parse_license(stdout)
 
 
+def gather_all() -> dict:
+    windows = gather()
+    try:
+        office = office_status()
+    except Exception as exc:
+        office = f"Office status unavailable: {exc}"
+    return {"windows": windows, "office": office}
+
+
 class LicenseInfoFrame(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, padding=16)
@@ -195,7 +204,8 @@ class LicenseInfoFrame(ttk.Frame):
             self, wraplength=660, style="Dim.TLabel",
             text="Windows edition, product key (registry or OEM source "
                  "when available) and activation status. Copy puts the "
-                 "whole block on the clipboard.",
+                 "whole block on the clipboard. If Office is installed, "
+                 "its license shows up here too.",
         ).pack(anchor="w", pady=(6, 12))
 
         buttons = ttk.Frame(self)
@@ -207,6 +217,10 @@ class LicenseInfoFrame(ttk.Frame):
         self._copy_button = ttk.Button(
             buttons, text="Copy", state="disabled", command=self._copy)
         self._copy_button.pack(side="left")
+        self._open_settings_button = ttk.Button(
+            buttons, text="Open activation settings",
+            command=self._open_activation)
+        self._open_settings_button.pack(side="left", padx=(8, 0))
 
         pane_row = ttk.Frame(self)
         pane_row.pack(fill="both", expand=True)
@@ -236,18 +250,21 @@ class LicenseInfoFrame(ttk.Frame):
         state = "disabled" if busy else "normal"
         self._refresh_button.configure(state=state)
         self._copy_button.configure(state=state)
+        self._open_settings_button.configure(state=state)
 
     def _refresh(self) -> None:
         self._set_busy(True)
         self.status.set_working("Reading license information...")
         tasks.BackgroundTask(
-            self, work=gather, on_done=self._load_done,
+            self, work=gather_all, on_done=self._load_done,
             on_error=self._load_error).start()
 
     def _load_done(self, data: dict) -> None:
         self._set_busy(False)
+        windows = data["windows"]
+        office = data["office"]
         try:
-            self._block = format_license_block(data)
+            self._block = format_license_block(windows) + "\n" + office
         except Exception as exc:
             self._copy_button.configure(state="disabled")
             self.status.set_error(f"Formatting failed: {exc}")
@@ -262,6 +279,15 @@ class LicenseInfoFrame(ttk.Frame):
     def _load_error(self, exc: BaseException) -> None:
         self._set_busy(False)
         self.status.set_error(f"Reading license information failed: {exc}")
+
+    def _open_activation(self) -> None:
+        try:
+            os.startfile("ms-settings:activation")
+        except OSError as exc:
+            self.status.set_error(
+                f"Could not open activation settings: {exc}")
+            return
+        self.status.set_success("Opening activation settings.")
 
     def _copy(self) -> None:
         if not self._block:

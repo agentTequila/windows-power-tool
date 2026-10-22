@@ -42,6 +42,8 @@ OSPP_SAMPLE = (
     "--------------------------------------\n"
 )
 
+OFFICE_BLOCK = license_info.format_office_block(OSPP_SAMPLE)
+
 
 class ParseLicenseTests(unittest.TestCase):
     def test_parses_object(self):
@@ -181,6 +183,23 @@ class GatherTests(unittest.TestCase):
             license_info.LICENSE_SCRIPT, timeout=120)
 
 
+class GatherAllTests(unittest.TestCase):
+    @patch.object(license_info, "office_status", return_value="OFFICE")
+    @patch.object(license_info, "gather", return_value=dict(FIXTURE))
+    def test_combines_both(self, _g, _o):
+        data = license_info.gather_all()
+        self.assertEqual(data["windows"]["caption"], FIXTURE["caption"])
+        self.assertEqual(data["office"], "OFFICE")
+
+    @patch.object(license_info, "office_status",
+                  side_effect=RuntimeError("cscript exploded"))
+    @patch.object(license_info, "gather", return_value=dict(FIXTURE))
+    def test_survives_office_error(self, _g, _o):
+        data = license_info.gather_all()
+        self.assertIn("cscript exploded", data["office"])
+        self.assertEqual(data["windows"]["caption"], FIXTURE["caption"])
+
+
 class LicenseInfoFrameTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -200,7 +219,8 @@ class LicenseInfoFrameTests(unittest.TestCase):
         self.fake_task.reset_mock()
 
     def _load(self, data=FIXTURE):
-        self.frame._load_done(dict(data))
+        self.frame._load_done({"windows": dict(data),
+                               "office": OFFICE_BLOCK})
 
     def _pane_text(self) -> str:
         return self.frame._output.get("1.0", "end")
@@ -208,6 +228,7 @@ class LicenseInfoFrameTests(unittest.TestCase):
     def test_load_done_fills_pane_and_enables_copy(self):
         self._load()
         self.assertIn("WINDOWS LICENSE INFORMATION", self._pane_text())
+        self.assertIn("OFFICE LICENSE INFORMATION", self._pane_text())
         self.assertEqual(
             str(self.frame._copy_button.cget("state")), "normal")
         self.assertIn("License information loaded",
@@ -217,7 +238,7 @@ class LicenseInfoFrameTests(unittest.TestCase):
         self._load()
         self.frame._refresh_button.invoke()
         kwargs = self.fake_task.call_args.kwargs
-        self.assertIs(kwargs["work"], license_info.gather)
+        self.assertIs(kwargs["work"], license_info.gather_all)
 
     def test_refresh_disables_buttons_and_error_reenables(self):
         self.frame._refresh()
@@ -234,7 +255,8 @@ class LicenseInfoFrameTests(unittest.TestCase):
     def test_format_failure_reports_error_without_copy(self):
         with patch.object(license_info, "format_license_block",
                           side_effect=ValueError("bad data")):
-            self.frame._load_done(dict(FIXTURE))
+            self.frame._load_done({"windows": dict(FIXTURE),
+                                   "office": OFFICE_BLOCK})
         self.assertIn("Formatting failed: bad data",
                       self.frame.status.text())
         self.assertEqual(
@@ -249,6 +271,32 @@ class LicenseInfoFrameTests(unittest.TestCase):
         self.frame._copy()
         self.assertEqual(self.root.clipboard_get(), self.frame._block)
         self.assertIn("Copied to clipboard", self.frame.status.text())
+
+    def test_open_activation_button_opens_settings(self):
+        self._load()
+        with patch.object(license_info.os, "startfile") as fake:
+            self.frame._open_settings_button.invoke()
+        fake.assert_called_once_with("ms-settings:activation")
+        self.assertIn("Opening activation settings",
+                      self.frame.status.text())
+
+    def test_open_activation_errors_surface(self):
+        self._load()
+        with patch.object(license_info.os, "startfile",
+                          side_effect=OSError("no uri handler")):
+            self.frame._open_settings_button.invoke()
+        self.assertIn("no uri handler", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_open_activation_disabled_while_busy(self):
+        self.frame._refresh()
+        self.assertEqual(str(self.frame._open_settings_button.cget("state")),
+                         "disabled")
+        kwargs = self.fake_task.call_args.kwargs
+        kwargs["on_error"](RuntimeError("x"))
+        self.assertEqual(str(self.frame._open_settings_button.cget("state")),
+                         "normal")
 
 
 if __name__ == "__main__":
