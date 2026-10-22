@@ -7,7 +7,7 @@ class VersionTests(unittest.TestCase):
     def test_version_format(self):
         self.assertRegex(__version__, r"^\d+\.\d+\.\d+$")
     def test_version_is_1_1_0(self):
-        self.assertEqual(__version__, "1.1.0")
+        self.assertEqual(__version__, "1.2.0")
     def test_window_title_includes_version(self):
         src = inspect.getsource(main_module)
         self.assertIn('f"Windows Power Tool {__version__}"', src)
