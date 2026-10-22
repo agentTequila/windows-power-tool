@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import tkinter as tk
 from tkinter import ttk
 
@@ -43,6 +44,59 @@ LICENSE_STATUS = {
 }
 
 _KEY_CHARS = "BCDFGHJKMPQRTVWXY2346789"
+
+_OFFICE_PLATFORM = "OfficeSoftwareProtectionPlatform"
+_OSPP_DIR = rf"\Common Files\Microsoft Shared\{_OFFICE_PLATFORM}\OSPP.VBS"
+
+OSPP_CANDIDATES: tuple[str, ...] = (
+    r"%ProgramFiles%" + _OSPP_DIR,
+    r"%ProgramFiles(x86)%" + _OSPP_DIR,
+    r"%ProgramFiles%\Microsoft Office\Office16\OSPP.VBS",
+    r"%ProgramFiles(x86)%\Microsoft Office\Office16\OSPP.VBS",
+    r"%ProgramFiles%\Microsoft Office\Office15\OSPP.VBS",
+    r"%ProgramFiles(x86)%\Microsoft Office\Office15\OSPP.VBS",
+)
+
+_OFFICE_LINE_PREFIXES: tuple[str, ...] = (
+    "LICENSE NAME:",
+    "LICENSE DESCRIPTION:",
+    "LICENSE STATUS:",
+    "ERROR CODE:",
+    "ERROR DESCRIPTION:",
+    "REMAINING GRACE:",
+    "Product key last 5 characters:",
+)
+
+
+def find_ospp(candidates: tuple[str, ...] = OSPP_CANDIDATES) -> str | None:
+    for candidate in candidates:
+        path = os.path.expandvars(candidate)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def format_office_block(output: str) -> str:
+    lines = ["=" * 62, "OFFICE LICENSE INFORMATION", "=" * 62]
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_OFFICE_LINE_PREFIXES):
+            lines.append(stripped)
+    return "\n".join(lines)
+
+
+def office_status() -> str:
+    header = f"{'=' * 62}\nOFFICE LICENSE INFORMATION\n{'=' * 62}"
+    path = find_ospp()
+    if path is None:
+        return header + "\nOffice was not found on this machine."
+    result = runner.run(
+        ["cscript.exe", "//nologo", path, "/dstatus"], timeout=60)
+    if result.returncode == 0:
+        return format_office_block(result.stdout)
+    detail = (result.stderr.strip() or result.stdout.strip()
+              or f"exit code {result.returncode}")
+    return header + f"\nCould not read Office license: {detail}"
 
 
 def parse_license(stdout: str) -> dict:

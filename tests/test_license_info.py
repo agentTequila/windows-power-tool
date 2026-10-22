@@ -20,6 +20,29 @@ FIXTURE = {
 }
 
 
+OSPP_SAMPLE = (
+    "Microsoft (R) Windows Script Host Version 5.812\n"
+    "Copyright (C) Microsoft Corporation. All rights reserved.\n"
+    "\n"
+    "---Processing--------------------------\n"
+    "--------------------------------------\n"
+    "Closing the Office Software Protection Platform instance.\n"
+    "\n"
+    "---------Processing---------\n"
+    "---------------------------------\n"
+    "LICENSE NAME: Office 16, VOLUME_KMSCLIENT channel\n"
+    "LICENSE DESCRIPTION: Office 16, VOLUME_KMSCLIENT channel\n"
+    "LICENSE STATUS:  ---LICENSED--- \n"
+    "ERROR CODE: 0x4004F00C (No error)\n"
+    "ERROR DESCRIPTION: Timeout\n"
+    "REMAINING GRACE: 178 days  (296 minute(s) before expiring)\n"
+    "Product key last 5 characters: NQ6XM\n"
+    "\n"
+    "---Exiting-----------------------------\n"
+    "--------------------------------------\n"
+)
+
+
 class ParseLicenseTests(unittest.TestCase):
     def test_parses_object(self):
         data = license_info.parse_license(json.dumps(FIXTURE))
@@ -95,6 +118,57 @@ class FormatLicenseBlockTests(unittest.TestCase):
         block = license_info.format_license_block({})
         self.assertIn("Not available", block)
         self.assertIn("Unknown", block)
+
+
+class FindOsppTests(unittest.TestCase):
+    def test_returns_first_existing_candidate(self):
+        with patch.object(license_info.os.path, "exists",
+                          side_effect=lambda p: p.endswith("B.vbs")):
+            self.assertEqual(
+                license_info.find_ospp(("A.vbs", "B.vbs", "C.vbs")),
+                "B.vbs")
+
+    def test_none_when_nothing_exists(self):
+        with patch.object(license_info.os.path, "exists",
+                          return_value=False):
+            self.assertIsNone(license_info.find_ospp(("A.vbs", "B.vbs")))
+
+
+class FormatOfficeBlockTests(unittest.TestCase):
+    def test_extracts_license_lines_drops_banners(self):
+        block = license_info.format_office_block(OSPP_SAMPLE)
+        self.assertIn("OFFICE LICENSE INFORMATION", block)
+        self.assertIn("LICENSE NAME: Office 16, VOLUME_KMSCLIENT channel", block)
+        self.assertIn("LICENSE STATUS:  ---LICENSED---", block)
+        self.assertIn("REMAINING GRACE: 178 days", block)
+        self.assertIn("Product key last 5 characters: NQ6XM", block)
+        self.assertNotIn("Processing", block)
+
+
+class OfficeStatusTests(unittest.TestCase):
+    @patch.object(license_info.runner, "run")
+    @patch.object(license_info, "find_ospp", return_value=None)
+    def test_missing_ospp_skips_runner(self, _find, fake_run):
+        self.assertIn("Office was not found", license_info.office_status())
+        fake_run.assert_not_called()
+
+    @patch.object(license_info.runner, "run")
+    @patch.object(license_info, "find_ospp",
+                  return_value=r"C:\x\OSPP.VBS")
+    def test_runs_cscript_dstatus(self, _find, fake_run):
+        fake_run.return_value = license_info.runner.Result(0, OSPP_SAMPLE, "")
+        block = license_info.office_status()
+        fake_run.assert_called_once_with(
+            ["cscript.exe", "//nologo", r"C:\x\OSPP.VBS", "/dstatus"],
+            timeout=60)
+        self.assertIn("LICENSE STATUS", block)
+
+    @patch.object(license_info.runner, "run")
+    @patch.object(license_info, "find_ospp",
+                  return_value=r"C:\x\OSPP.VBS")
+    def test_failure_returns_note_instead_of_raising(self, _find, fake_run):
+        fake_run.return_value = license_info.runner.Result(1, "", "boom")
+        self.assertIn("boom", license_info.office_status())
 
 
 class GatherTests(unittest.TestCase):
