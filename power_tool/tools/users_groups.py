@@ -1,4 +1,5 @@
 import json
+import re
 from functools import partial
 from tkinter import simpledialog, ttk
 
@@ -66,6 +67,53 @@ def reset_password_script(user: str, password: str) -> str:
 
 def delete_user_script(user: str) -> str:
     return f"Remove-LocalUser -Name {runner.ps_quote(user)}"
+
+
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\- ]{0,19}$")
+
+USERNAME_MESSAGE = ("Username must be 1–20 characters, start with a letter "
+                    "or digit, and use only letters, digits, spaces, dots, "
+                    "dashes or underscores.")
+
+
+def validate_username(name: str) -> str | None:
+    stripped = name.strip()
+    if USERNAME_PATTERN.match(stripped):
+        return None
+    return USERNAME_MESSAGE
+
+
+def validate_password(password: str, confirm: str) -> str | None:
+    if not password:
+        return "Password must not be empty."
+    if password != confirm:
+        return "Passwords do not match."
+    return None
+
+
+def add_user_scripts(name: str, password: str, to_admin: bool) -> list[str]:
+    scripts = [f"New-LocalUser -Name {runner.ps_quote(name)} "
+               f"-Password (ConvertTo-SecureString "
+               f"{runner.ps_quote(password)} -AsPlainText -Force) "
+               f"-AccountNeverExpires"]
+    if to_admin:
+        scripts.append(
+            f"Add-LocalGroupMember "
+            f"-Group {runner.ps_quote('Administrators')} "
+            f"-Member {runner.ps_quote(name)}")
+    return scripts
+
+
+def add_user_display(name: str, to_admin: bool) -> list[str]:
+    lines = [f"New-LocalUser -Name {runner.ps_quote(name)} "
+             f"-Password (ConvertTo-SecureString **** -AsPlainText -Force) "
+             f"-AccountNeverExpires"]
+    if to_admin:
+        lines.append(
+            f"Add-LocalGroupMember "
+            f"-Group {runner.ps_quote('Administrators')} "
+            f"-Member {runner.ps_quote(name)}")
+    return lines
 
 
 def gather() -> dict:

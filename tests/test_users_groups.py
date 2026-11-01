@@ -75,6 +75,79 @@ class ScriptBuilderTests(unittest.TestCase):
                          "Remove-LocalUser -Name 'bob'")
 
 
+class ValidateUsernameTests(unittest.TestCase):
+    def test_valid_simple(self):
+        self.assertIsNone(users_groups.validate_username("bob123"))
+
+    def test_valid_display_name(self):
+        self.assertIsNone(users_groups.validate_username("John Doe"))
+
+    def test_empty(self):
+        message = users_groups.validate_username("")
+        self.assertIn("Username", message)
+
+    def test_too_long(self):
+        message = users_groups.validate_username("a" * 21)
+        self.assertIn("Username", message)
+
+    def test_bad_char(self):
+        message = users_groups.validate_username("bob@home")
+        self.assertIn("Username", message)
+
+    def test_leading_dot(self):
+        message = users_groups.validate_username(".bob")
+        self.assertIn("Username", message)
+
+    def test_whitespace_stripped(self):
+        self.assertIsNone(users_groups.validate_username("  bob  "))
+
+
+class ValidatePasswordTests(unittest.TestCase):
+    def test_empty(self):
+        self.assertEqual(
+            users_groups.validate_password("", ""),
+            "Password must not be empty.")
+
+    def test_mismatch(self):
+        self.assertEqual(
+            users_groups.validate_password("secret1", "secret2"),
+            "Passwords do not match.")
+
+    def test_ok(self):
+        self.assertIsNone(
+            users_groups.validate_password("secret1", "secret1"))
+
+
+class AddUserScriptsTests(unittest.TestCase):
+    def test_single_script_no_admin(self):
+        scripts = users_groups.add_user_scripts("bob", "s3cret", False)
+        self.assertEqual(len(scripts), 1)
+        self.assertIn("New-LocalUser -Name 'bob'", scripts[0])
+        self.assertIn("-AsPlainText -Force", scripts[0])
+        self.assertIn("-AccountNeverExpires", scripts[0])
+        self.assertIn("'s3cret'", scripts[0])
+
+    def test_admin_script_appended(self):
+        scripts = users_groups.add_user_scripts("bob", "s3cret", True)
+        self.assertEqual(len(scripts), 2)
+        self.assertIn("Add-LocalGroupMember -Group 'Administrators' "
+                      "-Member 'bob'", scripts[1])
+
+    def test_password_with_quote_is_escaped(self):
+        scripts = users_groups.add_user_scripts("bob", "it's", False)
+        self.assertIn("'it''s'", scripts[0])
+
+
+class AddUserDisplayTests(unittest.TestCase):
+    def test_masks_and_matches_shape(self):
+        lines = users_groups.add_user_display("bob", True)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("****", lines[0])
+        self.assertNotIn("Password (ConvertTo-SecureString '",
+                         lines[0])  # no real key material
+        self.assertIn("New-LocalUser -Name 'bob'", lines[0])
+
+
 class GatherTests(unittest.TestCase):
     @patch.object(users_groups.runner, "run_powershell_checked")
     def test_uses_checked_runner_and_parses(self, fake_checked):
