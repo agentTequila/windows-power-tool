@@ -391,5 +391,153 @@ class UsersGroupsFrameTests(unittest.TestCase):
                       self.frame.status.text())
 
 
+class AddUserFlowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tk.Tk()
+        cls.root.withdraw()
+        theme.apply_theme(cls.root, "dark")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.root.destroy()
+
+    def setUp(self):
+        task = patch.object(users_groups.tasks, "BackgroundTask")
+        self.fake_task = task.start()
+        self.addCleanup(task.stop)
+        guard = patch.object(users_groups.widgets, "guard_admin",
+                             return_value=True)
+        guard.start()
+        self.addCleanup(guard.stop)
+        self.frame = users_groups.UsersGroupsFrame(self.root)
+        self.fake_task.reset_mock()
+
+    def _prompts(self, name="bob", password="s3cret", confirm="s3cret"):
+        return patch.object(
+            users_groups.simpledialog, "askstring",
+            side_effect=[name, password, confirm])
+
+    def test_username_cancel_no_guard(self):
+        with patch.object(users_groups.widgets, "guard_admin") as fake_guard, \
+             patch.object(users_groups.simpledialog, "askstring",
+                          return_value=None), \
+             patch.object(users_groups.widgets, "confirm") as fake_confirm:
+            self.frame._add_user()
+        fake_guard.assert_not_called()
+        fake_confirm.assert_not_called()
+        self.fake_task.assert_not_called()
+        self.assertIn("Cancelled", self.frame.status.text())
+
+    def test_invalid_username_reports_error_no_task(self):
+        with patch.object(users_groups.simpledialog, "askstring",
+                          return_value="bob@x"):
+            self.frame._add_user()
+        self.fake_task.assert_not_called()
+        self.assertIn("Username", self.frame.status.text())
+
+    def test_password_mismatch_reports_error_no_task(self):
+        with self._prompts(password="secret1", confirm="secret2"):
+            self.frame._add_user()
+        self.fake_task.assert_not_called()
+        self.assertIn("do not match", self.frame.status.text())
+
+    def test_not_admin_never_reaches_confirm(self):
+        with patch.object(users_groups.widgets, "guard_admin",
+                          REAL_GUARD_ADMIN), \
+             patch("power_tool.core.admin.is_admin", return_value=False), \
+             self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True), \
+             patch.object(users_groups.widgets, "confirm") as fake_confirm:
+            self.frame._add_user()
+        fake_confirm.assert_not_called()
+        self.fake_task.assert_not_called()
+        self.assertIn("Run as administrator required",
+                      self.frame.status.text())
+
+    def test_confirm_cancelled_no_task(self):
+        with self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True), \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=False):
+            self.frame._add_user()
+        self.fake_task.assert_not_called()
+        self.assertIn("Cancelled", self.frame.status.text())
+
+    def test_confirmed_runs_scripts_and_refreshes(self):
+        with self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True), \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=True):
+            self.frame._add_user()
+        self.fake_task.return_value.start.assert_called_once()
+        kwargs = self.fake_task.call_args.kwargs
+        with patch.object(users_groups.runner,
+                          "run_powershell_checked") as fake_checked:
+            kwargs["work"]()
+        expected = users_groups.add_user_scripts("bob", "s3cret", True)
+        self.assertEqual([c.args for c in fake_checked.call_args_list],
+                         [(s, 60) for s in expected])
+        kwargs["on_done"](None)
+        load_kwargs = self.fake_task.call_args.kwargs
+        self.assertEqual(load_kwargs["work"], users_groups.gather)
+        load_kwargs["on_done"](json.loads(json.dumps(FIXTURE)))
+        self.assertIn("User 'bob' created", self.frame.status.text())
+
+    def test_confirm_message_masks_password(self):
+        with self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True), \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=True) as fake_confirm:
+            self.frame._add_user()
+        message = fake_confirm.call_args.args[2]
+        self.assertNotIn("s3cret", message)
+        self.assertIn("****", message)
+        self.assertIn("New-LocalUser -Name 'bob'", message)
+
+    def test_admin_choice_false_still_creates_without_admin_script(self):
+        with self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=False), \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=True), \
+             patch.object(users_groups, "run_scripts") as fake_run:
+            self.frame._add_user()
+        work = self.fake_task.call_args.kwargs["work"]
+        work()
+        fake_run.assert_called_once()
+        scripts = fake_run.call_args.args[0]
+        self.assertEqual(len(scripts), 1)
+        self.assertIn("New-LocalUser -Name 'bob'", scripts[0])
+
+    @patch.object(users_groups.runner, "run_powershell_checked")
+    def test_run_scripts_stops_at_first_failure(self, fake_checked):
+        fake_checked.side_effect = [RuntimeError("boom"), "unreachable"]
+        with self.assertRaises(RuntimeError):
+            users_groups.run_scripts(["one", "two"])
+        fake_checked.assert_called_once_with("one", 60)
+
+    def test_start_action_accepts_list(self):
+        with patch.object(users_groups, "run_scripts") as fake_run:
+            self.frame._start_action(["a", "b"], "Done.")
+            work = self.fake_task.call_args.kwargs["work"]
+            work()
+        self.fake_task.return_value.start.assert_called_once()
+        fake_run.assert_called_once_with(["a", "b"])
+
+    def test_add_user_button_busy_coverage(self):
+        button = self.frame._add_user_button
+        self.assertEqual(str(button.cget("text")), "Add User")
+        self.assertIn(button, self.frame._action_buttons)
+        self.frame._set_busy(True)
+        self.assertEqual(str(button.cget("state")), "disabled")
+        self.frame._set_busy(False)
+        self.assertEqual(str(button.cget("state")), "normal")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,8 @@
 import json
 import re
+from collections.abc import Sequence
 from functools import partial
-from tkinter import simpledialog, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 from power_tool.core import runner, tasks, widgets
 
@@ -121,6 +122,11 @@ def gather() -> dict:
     return parse_data(stdout)
 
 
+def run_scripts(scripts: list[str]) -> None:
+    for script in scripts:
+        runner.run_powershell_checked(script, 60)
+
+
 class UsersGroupsFrame(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent, padding=16)
@@ -130,7 +136,9 @@ class UsersGroupsFrame(ttk.Frame):
             self, wraplength=660, style="Dim.TLabel",
             text="Manage local accounts: group membership, password reset, "
                  "enable, disable and delete. Destructive actions ask for "
-                 "confirmation first.",
+                 "confirmation first. Add User creates an account after "
+                 "asking for a name and password, and shows you what it "
+                 "will run first.",
         ).pack(anchor="w", pady=(6, 12))
 
         top = ttk.Frame(self)
@@ -139,6 +147,10 @@ class UsersGroupsFrame(ttk.Frame):
             top, text="Refresh", style="Accent.TButton",
             command=self._refresh)
         self._refresh_button.pack(side="left")
+        self._add_user_button = ttk.Button(
+            top, text="Add User", command=self._add_user)
+        self._add_user_button.pack(side="left", padx=(6, 0))
+        self._action_buttons = [self._add_user_button]
 
         tree_row = ttk.Frame(self)
         tree_row.pack(fill="both", expand=True)
@@ -164,7 +176,6 @@ class UsersGroupsFrame(ttk.Frame):
             values=list(PREFERRED_GROUPS))
         self._group_combo.pack(side="left", padx=(6, 10))
         self._group_combo.set(PREFERRED_GROUPS[0])
-        self._action_buttons = []
         for text, command in (
                 ("Add to Group", self._add_to_group),
                 ("Remove from Group", self._remove_from_group)):
@@ -248,13 +259,18 @@ class UsersGroupsFrame(ttk.Frame):
         value = self._group_combo.get().strip()
         return value or None
 
-    def _start_action(self, script: str, success: str) -> None:
+    def _start_action(self, script: str | Sequence[str],
+                      success: str) -> None:
         if not widgets.guard_admin(self.status):
             return
+        if isinstance(script, str):
+            work = partial(runner.run_powershell_checked, script, 60)
+        else:
+            work = partial(run_scripts, script)
         self._set_busy(True)
         self.status.set_working("Applying change...")
         tasks.BackgroundTask(
-            self, work=partial(runner.run_powershell_checked, script, 60),
+            self, work=work,
             on_done=lambda _: self._action_done(success),
             on_error=self._action_error).start()
 
@@ -348,6 +364,48 @@ class UsersGroupsFrame(ttk.Frame):
             return
         self._start_action(delete_user_script(user),
                            f"Account {user} deleted.")
+
+    def _add_user(self) -> None:
+        raw = simpledialog.askstring("Add user", "Username:", parent=self)
+        if raw is None:
+            self.status.set_idle("Cancelled.")
+            return
+        name = raw.strip()
+        message = validate_username(name)
+        if message:
+            self.status.set_error(message)
+            return
+        password = simpledialog.askstring("Add user", "Password:", show="*")
+        if password is None:
+            self.status.set_idle("Cancelled.")
+            return
+        confirm_password = simpledialog.askstring(
+            "Add user", "Confirm password:", show="*")
+        if confirm_password is None:
+            self.status.set_idle("Cancelled.")
+            return
+        message = validate_password(password, confirm_password)
+        if message:
+            self.status.set_error(message)
+            return
+        to_admin = messagebox.askyesno(
+            "Add user", "Add this account to the Administrators group?")
+        if not widgets.guard_admin(self.status):
+            return
+        preview = "\n".join(add_user_display(name, to_admin))
+        if not widgets.confirm(
+                self, "Add user",
+                f"{preview}\n\nCreate this account?"):
+            self.status.set_idle("Cancelled.")
+            return
+        self._set_busy(True)
+        self.status.set_working(f"Creating user {name}...")
+        tasks.BackgroundTask(
+            self,
+            work=partial(run_scripts,
+                         add_user_scripts(name, password, to_admin)),
+            on_done=lambda _: self._action_done(f"User '{name}' created."),
+            on_error=self._action_error).start()
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:
