@@ -5,15 +5,18 @@ from power_tool.core import admin
 
 class StatusPane(ttk.Frame):
     def __init__(self, parent):
-        super().__init__(parent, style="Panel.TFrame", padding=(10, 8))
+        super().__init__(parent, style="Status.TFrame", padding=(12, 9))
+        self._dot = ttk.Label(self, text="●", style="Idle.TLabel")
+        self._dot.pack(side="left")
         self._label = ttk.Label(self, text="Ready", style="Idle.TLabel")
-        self._label.pack(fill="x")
+        self._label.pack(side="left", padx=(8, 0), fill="x", expand=True)
 
     def text(self) -> str:
         return str(self._label.cget("text"))
 
     def _show(self, text: str, style: str) -> None:
         self._label.configure(text=text, style=style)
+        self._dot.configure(style=style)
 
     def set_idle(self, text: str = "Ready") -> None:
         self._show(text, "Idle.TLabel")

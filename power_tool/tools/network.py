@@ -180,6 +180,11 @@ class NetworkFrame(ttk.Frame):
                  "isn't cutting it.",
         ).pack(anchor="w", pady=(6, 12))
 
+        # Reserve the bottom status bar before the expandable output, so a
+        # tall tool can never push it off the page.
+        self.status = widgets.StatusPane(self)
+        self.status.pack(side="bottom", fill="x", pady=(10, 0))
+
         actions = ttk.Frame(self)
         actions.pack(anchor="w", pady=(0, 10))
         self._action_names = list(ACTIONS)
@@ -211,7 +216,7 @@ class NetworkFrame(ttk.Frame):
 
         palette = theme.current_palette()
         self._ping_output = tk.Text(
-            self, wrap="none", height=6, font=("Consolas", 10),
+            self, wrap="none", height=4, font=("Consolas", 10),
             bg=palette["entry_bg"], fg=palette["fg"],
             insertbackground=palette["fg"], relief="flat", padx=10, pady=8,
             state="disabled")
@@ -245,12 +250,14 @@ class NetworkFrame(ttk.Frame):
 
         fields = ttk.Frame(ip_section)
         fields.pack(fill="x", pady=(0, 6))
-        self._ip_entry = self._make_field(fields, 0, "IP address:")
-        self._mask_entry = self._make_field(fields, 1, "Subnet mask:")
-        self._gw_entry = self._make_field(fields, 2, "Gateway (blank = none):")
-        self._dns_entry = self._make_field(fields, 3, "DNS server:")
-        self._dns_alt_entry = self._make_field(fields, 4,
-                                               "DNS alternate (optional):")
+        fields.grid_columnconfigure(1, weight=1)
+        fields.grid_columnconfigure(3, weight=1)
+        self._ip_entry = self._make_field(fields, 0, 0, "IP address:")
+        self._mask_entry = self._make_field(fields, 0, 2, "Subnet mask:")
+        self._gw_entry = self._make_field(fields, 1, 0, "Gateway:")
+        self._dns_entry = self._make_field(fields, 1, 2, "DNS server:")
+        self._dns_alt_entry = self._make_field(fields, 2, 0,
+                                               "DNS alternate:")
 
         buttons = ttk.Frame(ip_section)
         buttons.pack(anchor="w", pady=(4, 0))
@@ -264,21 +271,20 @@ class NetworkFrame(ttk.Frame):
         self._mode_changed()  # entries start disabled under DHCP
 
         self._output = tk.Text(
-            self, wrap="none", height=18, font=("Consolas", 10),
+            self, wrap="none", height=10, font=("Consolas", 10),
             bg=palette["entry_bg"], fg=palette["fg"],
             insertbackground=palette["fg"], relief="flat", padx=10, pady=8,
             state="disabled")
         self._output.pack(fill="both", expand=True)
         theme.observe(self._on_theme)
 
-        self.status = widgets.StatusPane(self)
-        self.status.pack(fill="x", pady=(10, 0))
-
-    def _make_field(self, parent, row: int, label: str) -> ttk.Entry:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w",
-                                           pady=2)
-        entry = ttk.Entry(parent, width=32)
-        entry.grid(row=row, column=1, sticky="w", padx=8, pady=2)
+    def _make_field(self, parent, row: int, column: int,
+                    label: str) -> ttk.Entry:
+        ttk.Label(parent, text=label).grid(row=row, column=column,
+                                           sticky="w", pady=2,
+                                           padx=(0 if column == 0 else 18, 6))
+        entry = ttk.Entry(parent, width=28)
+        entry.grid(row=row, column=column + 1, sticky="ew", padx=8, pady=2)
         return entry
 
     def _mode_changed(self) -> None:

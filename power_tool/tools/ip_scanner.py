@@ -372,14 +372,18 @@ class IPScannerFrame(ttk.Frame):
             text="Hand it a block like 192.168.1.0/24 and it checks "
                  "every address, listing the devices that answer with "
                  "their name, MAC address and ping time — plus which "
-                 "addresses are still free. The Port scanner below "
-                 "probes a single host to see which services are "
-                 "open to the network.",
+                 "addresses are still free. The Port scanner tab probes "
+                 "a single host to see which services are open to the "
+                 "network.",
         ).pack(anchor="w", pady=(6, 12))
 
-        self._sweep_frame = ttk.LabelFrame(self, text="IP block scan",
-                                           padding=10)
-        self._sweep_frame.pack(fill="x", pady=(0, 10))
+        self.status = widgets.StatusPane(self)
+        self.status.pack(side="bottom", fill="x", pady=(8, 0))
+
+        self._notebook = ttk.Notebook(self)
+        self._notebook.pack(fill="both", expand=True)
+        self._sweep_frame = ttk.Frame(self._notebook, padding=10)
+        self._notebook.add(self._sweep_frame, text="Block scan")
         sweep_row = ttk.Frame(self._sweep_frame)
         sweep_row.pack(fill="x", pady=(0, 6))
         ttk.Label(sweep_row, text="Block:").pack(side="left")
@@ -397,8 +401,10 @@ class IPScannerFrame(ttk.Frame):
             command=self._copy_report)
         self._copy_button.pack(side="left")
 
+        hosts_row = ttk.Frame(self._sweep_frame)
+        hosts_row.pack(fill="both", expand=True, pady=(0, 6))
         self._hosts_tree = ttk.Treeview(
-            self._sweep_frame, columns=("ip", "hostname", "mac", "ms"),
+            hosts_row, columns=("ip", "hostname", "mac", "ms"),
             show="headings", height=6)
         for column, width, heading in (("ip", 110, "IP"),
                                        ("hostname", 230, "Hostname"),
@@ -406,7 +412,11 @@ class IPScannerFrame(ttk.Frame):
                                        ("ms", 70, "Ping ms")):
             self._hosts_tree.heading(column, text=heading)
             self._hosts_tree.column(column, width=width, anchor="w")
-        self._hosts_tree.pack(fill="x", pady=(0, 6))
+        self._hosts_tree.pack(side="left", fill="both", expand=True)
+        hosts_scroll = ttk.Scrollbar(hosts_row, orient="vertical",
+                                     command=self._hosts_tree.yview)
+        hosts_scroll.pack(side="right", fill="y")
+        self._hosts_tree.configure(yscrollcommand=hosts_scroll.set)
 
         free_row = ttk.Frame(self._sweep_frame)
         free_row.pack(fill="x")
@@ -423,9 +433,8 @@ class IPScannerFrame(ttk.Frame):
         self._free_text.pack(fill="x", pady=(6, 0))
         theme.observe(self._on_theme)
 
-        self._port_frame = ttk.LabelFrame(self, text="Port scanner",
-                                          padding=10)
-        self._port_frame.pack(fill="x", pady=(0, 10))
+        self._port_frame = ttk.Frame(self._notebook, padding=10)
+        self._notebook.add(self._port_frame, text="Port scanner")
         port_row = ttk.Frame(self._port_frame)
         port_row.pack(fill="x", pady=(0, 6))
         ttk.Label(port_row, text="Host:").pack(side="left")
@@ -442,17 +451,20 @@ class IPScannerFrame(ttk.Frame):
                                               length=160)
         self._port_progress.pack(side="left")
 
+        ports_row = ttk.Frame(self._port_frame)
+        ports_row.pack(fill="both", expand=True)
         self._ports_tree = ttk.Treeview(
-            self._port_frame, columns=("port", "service"), show="headings",
+            ports_row, columns=("port", "service"), show="headings",
             height=5)
         for column, width, heading in (("port", 90, "Port"),
                                        ("service", 180, "Service")):
             self._ports_tree.heading(column, text=heading)
             self._ports_tree.column(column, width=width, anchor="w")
-        self._ports_tree.pack(fill="x")
-
-        self.status = widgets.StatusPane(self)
-        self.status.pack(fill="x", pady=(10, 0))
+        self._ports_tree.pack(side="left", fill="both", expand=True)
+        ports_scroll = ttk.Scrollbar(ports_row, orient="vertical",
+                                     command=self._ports_tree.yview)
+        ports_scroll.pack(side="right", fill="y")
+        self._ports_tree.configure(yscrollcommand=ports_scroll.set)
 
     # --- theming ------------------------------------------------------
     def _on_theme(self, palette: dict) -> None:

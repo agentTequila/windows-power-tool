@@ -202,7 +202,7 @@ class UsbGuardFrameTests(unittest.TestCase):
         self.assertEqual(str(frame._state_label.cget("style")),
                          "Success.TLabel")
 
-    def test_block_tells_the_user_to_restart(self):
+    def test_block_tells_the_user_to_reconnect(self):
         frame = self._frame(usb_guard.STATE_ALLOWED)
         with patch.object(usb_guard.widgets, "guard_admin",
                           return_value=True), \
@@ -211,9 +211,10 @@ class UsbGuardFrameTests(unittest.TestCase):
                           return_value=usb_guard.STATE_BLOCKED):
             frame._block()
         fake_set.assert_called_once_with(True)
-        self.assertIn("Restart Windows", frame.status.text())
+        self.assertIn("Reconnect the drive", frame.status.text())
+        self.assertIn("restart", frame.status.text().lower())
 
-    def test_unblock_tells_the_user_to_restart(self):
+    def test_unblock_tells_the_user_to_reconnect(self):
         frame = self._frame(usb_guard.STATE_BLOCKED)
         with patch.object(usb_guard.widgets, "guard_admin",
                           return_value=True), \
@@ -222,7 +223,8 @@ class UsbGuardFrameTests(unittest.TestCase):
                           return_value=usb_guard.STATE_ALLOWED):
             frame._unblock()
         fake_set.assert_called_once_with(False)
-        self.assertIn("Restart Windows", frame.status.text())
+        self.assertIn("Reconnect the drive", frame.status.text())
+        self.assertIn("restart", frame.status.text().lower())
 
     def test_toggle_requires_admin(self):
         frame = self._frame(usb_guard.STATE_ALLOWED)

@@ -7,9 +7,11 @@ import unittest
 from pathlib import Path
 
 from power_tool import main as app_main
+from power_tool.tools import REGISTRY
 
 REPO = Path(__file__).resolve().parent.parent
 GEN_PATH = REPO / "assets" / "generate_icon.py"
+ICONS_PATH = REPO / "assets" / "icons"
 
 
 def _load_generator():
@@ -63,6 +65,19 @@ class GeneratorTests(unittest.TestCase):
 
     def test_sizes_constant_matches_spec(self):
         self.assertEqual(self.gen.SIZES, (16, 24, 32, 48, 64, 128, 256))
+
+
+class ToolIconAssetTests(unittest.TestCase):
+    def test_every_tool_has_all_three_variants(self):
+        stems = {module.__name__.rsplit(".", 1)[-1]
+                 for _, modules in REGISTRY for _, module in modules}
+        self.assertEqual(len(stems), 14)
+        for variant in ("normal_dark", "normal_light", "active"):
+            for stem in stems:
+                path = ICONS_PATH / variant / f"{stem}.png"
+                self.assertTrue(path.is_file(), f"missing {path}")
+                self.assertEqual(path.read_bytes()[:8],
+                                 b"\x89PNG\r\n\x1a\n")
 
 
 class IconPathTests(unittest.TestCase):

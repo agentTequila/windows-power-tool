@@ -7,19 +7,21 @@ from typing import Callable
 
 PALETTES = {
     "dark": {
-        "bg": "#1e1f26", "panel": "#26272f", "panel2": "#2e2f3a",
-        "fg": "#e6e6ea", "dim": "#9a9aa8", "accent": "#4f8cff",
-        "accent_fg": "#ffffff", "success": "#3fbf6f", "danger": "#e05555",
-        "warn": "#e0a13f", "border": "#3a3b47", "entry_bg": "#17181d",
+        "bg": "#0f1116", "panel": "#161a22", "panel2": "#1f2531",
+        "fg": "#e8ebf2", "dim": "#8b94a7", "accent": "#5b8def",
+        "accent_fg": "#ffffff", "success": "#3ddc97", "danger": "#ff6b6b",
+        "warn": "#f2b84b", "border": "#283040", "entry_bg": "#0b0e13",
     },
     "light": {
-        "bg": "#f4f5f8", "panel": "#ffffff", "panel2": "#eceef3",
-        "fg": "#1b1c22", "dim": "#5f6070", "accent": "#2f6fe0",
-        "accent_fg": "#ffffff", "success": "#1f9d55", "danger": "#d13b3b",
-        "warn": "#b57a17", "border": "#d4d6de", "entry_bg": "#ffffff",
+        "bg": "#f4f6fb", "panel": "#ffffff", "panel2": "#e9edf5",
+        "fg": "#131722", "dim": "#5c687c", "accent": "#2f6fed",
+        "accent_fg": "#ffffff", "success": "#12805c", "danger": "#c43d3d",
+        "warn": "#9a6300", "border": "#d7dde9", "entry_bg": "#ffffff",
     },
 }
 DEFAULT_THEME = "dark"
+
+FONT = "Segoe UI"
 
 _observers: list[Callable[[dict], None]] = []
 _current: dict = dict(PALETTES[DEFAULT_THEME])
@@ -133,58 +135,172 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
                     fieldbackground=p["entry_bg"], bordercolor=p["border"])
     style.configure("TFrame", background=p["bg"])
     style.configure("Panel.TFrame", background=p["panel"])
-    style.configure("TLabel", background=p["bg"], foreground=p["fg"])
-    style.configure("Panel.TLabel", background=p["panel"], foreground=p["fg"])
-    style.configure("PanelDim.TLabel", background=p["panel"], foreground=p["dim"])
-    style.configure("PanelTitle.TLabel", background=p["panel"], foreground=p["fg"],
-                    font=("Segoe UI", 13, "bold"))
-    style.configure("Dim.TLabel", background=p["bg"], foreground=p["dim"])
+    style.configure("Sidebar.TFrame", background=p["panel"])
+    style.configure("Topbar.TFrame", background=p["panel"])
+    style.configure("Content.TFrame", background=p["bg"])
+    style.configure("Divider.TFrame", background=p["border"])
+    style.configure("Status.TFrame", background=p["panel"])
+
+    style.configure("TLabel", background=p["bg"], foreground=p["fg"],
+                    font=(FONT, 10))
+    style.configure("Panel.TLabel", background=p["panel"], foreground=p["fg"],
+                    font=(FONT, 10))
+    style.configure("PanelDim.TLabel", background=p["panel"],
+                    foreground=p["dim"], font=(FONT, 10))
+    style.configure("Topbar.TLabel", background=p["panel"],
+                    foreground=p["fg"])
+    style.configure("AppTitle.TLabel", background=p["panel"],
+                    foreground=p["fg"], font=(FONT, 15, "bold"))
+    style.configure("Dim.TLabel", background=p["bg"], foreground=p["dim"],
+                    font=(FONT, 10))
     style.configure("Title.TLabel", background=p["bg"], foreground=p["fg"],
-                    font=("Segoe UI", 14, "bold"))
-    style.configure("Idle.TLabel", background=p["panel"], foreground=p["dim"])
-    style.configure("Working.TLabel", background=p["panel"], foreground=p["accent"])
-    style.configure("Success.TLabel", background=p["panel"], foreground=p["success"])
-    style.configure("Error.TLabel", background=p["panel"], foreground=p["danger"])
-    style.configure("Warn.TLabel", background=p["panel"], foreground=p["warn"])
-    style.configure("Accent.TButton", background=p["accent"], foreground=p["accent_fg"],
-                    padding=(12, 6))
+                    font=(FONT, 20, "bold"))
+    style.configure("Chip.TLabel", background=p["panel2"],
+                    foreground=p["dim"], font=(FONT, 8), padding=(8, 3))
+    style.configure("ChipSuccess.TLabel", background=p["panel2"],
+                    foreground=p["success"], font=(FONT, 8), padding=(8, 3))
+    style.configure("ChipError.TLabel", background=p["panel2"],
+                    foreground=p["danger"], font=(FONT, 8), padding=(8, 3))
+    style.configure("SidebarHeading.TLabel", background=p["panel"],
+                    foreground=p["dim"], font=(FONT, 8, "bold"))
+    style.configure("PanelHeading.TLabel", background=p["panel"],
+                    foreground=p["dim"], font=(FONT, 8, "bold"))
+    style.configure("Idle.TLabel", background=p["panel"], foreground=p["dim"],
+                    font=(FONT, 9))
+    style.configure("Working.TLabel", background=p["panel"],
+                    foreground=p["accent"], font=(FONT, 9))
+    style.configure("Success.TLabel", background=p["panel"],
+                    foreground=p["success"], font=(FONT, 9))
+    style.configure("Error.TLabel", background=p["panel"],
+                    foreground=p["danger"], font=(FONT, 9))
+    style.configure("Warn.TLabel", background=p["panel"],
+                    foreground=p["warn"], font=(FONT, 9))
+
+    style.configure("Accent.TButton", background=p["accent"],
+                    foreground=p["accent_fg"], padding=(14, 7),
+                    font=(FONT, 9, "bold"), borderwidth=0, focusthickness=0,
+                    relief="flat")
     style.map("Accent.TButton",
-              background=[("active", _shade(p["accent"], 0.85))],
-              foreground=[("active", p["accent_fg"]), ("disabled", p["dim"])])
-    style.configure("Danger.TButton", background=p["danger"], foreground=p["accent_fg"],
-                    padding=(12, 6))
+              background=[("active", _shade(p["accent"], 0.86)),
+                          ("pressed", _shade(p["accent"], 0.78))],
+              foreground=[("active", p["accent_fg"]),
+                          ("disabled", p["dim"])])
+    style.configure("Danger.TButton", background=p["danger"],
+                    foreground=p["accent_fg"], padding=(14, 7),
+                    font=(FONT, 9, "bold"), borderwidth=0, focusthickness=0,
+                    relief="flat")
     style.map("Danger.TButton",
-              background=[("active", _shade(p["danger"], 0.85))],
-              foreground=[("active", p["accent_fg"]), ("disabled", p["dim"])])
-    style.configure("TButton", padding=(10, 5))
+              background=[("active", _shade(p["danger"], 0.86)),
+                          ("pressed", _shade(p["danger"], 0.78))],
+              foreground=[("active", p["accent_fg"]),
+                          ("disabled", p["dim"])])
+    style.configure("TButton", background=p["panel2"], foreground=p["fg"],
+                    padding=(12, 6), font=(FONT, 9), borderwidth=0,
+                    focusthickness=0, relief="flat")
     style.map("TButton",
-              background=[("active", p["panel2"])],
+              background=[("active", _shade(p["panel2"], 1.16)),
+                          ("pressed", _shade(p["panel2"], 0.9))],
               foreground=[("active", p["fg"]), ("disabled", p["dim"])])
-    style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"])
+    style.configure("Ghost.TButton", background=p["panel"],
+                    foreground=p["fg"], padding=(10, 6), font=(FONT, 9),
+                    borderwidth=0, focusthickness=0, relief="flat")
+    style.map("Ghost.TButton",
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["accent"])])
+
+    style.configure("TCheckbutton", background=p["bg"], foreground=p["fg"],
+                    font=(FONT, 10))
     style.map("TCheckbutton",
               background=[("active", p["panel2"])],
               foreground=[("active", p["fg"]), ("disabled", p["dim"])])
     _apply_tick_indicator(style, root, name, p)
-    style.configure("TRadiobutton", background=p["bg"], foreground=p["fg"])
+    style.configure("TRadiobutton", background=p["bg"], foreground=p["fg"],
+                    font=(FONT, 10))
     style.map("TRadiobutton",
               background=[("active", p["panel2"])],
               foreground=[("active", p["fg"]), ("disabled", p["dim"])])
-    style.configure("TEntry", fieldbackground=p["entry_bg"], foreground=p["fg"])
-    style.configure("TLabelframe", background=p["bg"], foreground=p["fg"],
-                    bordercolor=p["border"])
-    style.configure("TLabelframe.Label", background=p["bg"], foreground=p["dim"])
+
+    style.configure("TEntry", fieldbackground=p["entry_bg"],
+                    foreground=p["fg"], insertcolor=p["fg"],
+                    bordercolor=p["border"], lightcolor=p["border"],
+                    darkcolor=p["border"], borderwidth=1, relief="flat",
+                    padding=(7, 5))
+    style.map("TEntry", bordercolor=[("focus", p["accent"])])
+    style.configure("TCombobox", fieldbackground=p["entry_bg"],
+                    background=p["panel2"], foreground=p["fg"],
+                    arrowcolor=p["dim"], bordercolor=p["border"],
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    borderwidth=1, relief="flat", padding=(6, 4))
+    style.map("TCombobox",
+              fieldbackground=[("readonly", p["entry_bg"])],
+              bordercolor=[("focus", p["accent"])])
+    style.configure("TSpinbox", fieldbackground=p["entry_bg"],
+                    background=p["panel2"], foreground=p["fg"],
+                    arrowcolor=p["dim"], bordercolor=p["border"],
+                    borderwidth=1, relief="flat", padding=(6, 4))
+    style.map("TSpinbox", bordercolor=[("focus", p["accent"])])
+
+    style.configure("TLabelframe", background=p["bg"],
+                    bordercolor=p["border"], lightcolor=p["border"],
+                    darkcolor=p["border"], borderwidth=1,
+                    relief="solid", padding=12)
+    style.configure("TLabelframe.Label", background=p["bg"],
+                    foreground=p["dim"], font=(FONT, 9, "bold"))
+    style.configure("TNotebook", background=p["bg"],
+                    bordercolor=p["border"], lightcolor=p["border"],
+                    darkcolor=p["border"], borderwidth=0, relief="flat")
+    style.configure("TNotebook.Tab", background=p["panel2"],
+                    foreground=p["dim"], padding=(16, 8),
+                    font=(FONT, 9), borderwidth=0, relief="flat")
+    style.map("TNotebook.Tab",
+              background=[("selected", p["panel"]),
+                          ("active", p["panel2"])],
+              foreground=[("selected", p["fg"]),
+                          ("active", p["fg"])])
+
     style.configure("Treeview", background=p["panel"], foreground=p["fg"],
-                    fieldbackground=p["panel"], rowheight=24)
-    style.configure("Treeview.Heading", background=p["panel2"], foreground=p["fg"])
-    style.map("Treeview", background=[("selected", p["accent"])],
+                    fieldbackground=p["panel"], bordercolor=p["border"],
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    borderwidth=0, relief="flat", rowheight=28,
+                    font=(FONT, 9))
+    style.configure("Treeview.Heading", background=p["panel"],
+                    foreground=p["dim"], font=(FONT, 8, "bold"),
+                    bordercolor=p["border"], lightcolor=p["border"],
+                    darkcolor=p["border"], borderwidth=0, relief="flat",
+                    padding=(8, 7))
+    style.map("Treeview.Heading",
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["fg"])])
+    style.map("Treeview",
+              background=[("selected", p["accent"])],
               foreground=[("selected", p["accent_fg"])])
-    style.configure("Sidebar.TButton", background=p["panel"], foreground=p["fg"],
-                    anchor="w", padding=(14, 8))
-    style.map("Sidebar.TButton", background=[("active", p["panel2"])])
+
+    style.configure("Horizontal.TProgressbar", background=p["accent"],
+                    troughcolor=p["panel2"], bordercolor=p["panel2"],
+                    lightcolor=p["panel2"], darkcolor=p["panel2"],
+                    borderwidth=0, thickness=6)
+    style.configure("TScrollbar", background=p["panel2"],
+                    troughcolor=p["bg"], bordercolor=p["border"],
+                    lightcolor=p["border"], darkcolor=p["border"],
+                    arrowcolor=p["dim"], width=10, arrowsize=10,
+                    relief="flat", borderwidth=0)
+    style.map("TScrollbar",
+              background=[("active", p["border"])],
+              arrowcolor=[("active", p["fg"])])
+
+    style.configure("Sidebar.TButton", background=p["panel"],
+                    foreground=p["fg"], anchor="w", padding=(12, 7),
+                    font=(FONT, 10), borderwidth=0, focusthickness=0,
+                    relief="flat")
+    style.map("Sidebar.TButton",
+              background=[("active", p["panel2"])],
+              foreground=[("active", p["fg"])])
     style.configure("Active.Sidebar.TButton", background=p["accent"],
-                    foreground=p["accent_fg"], anchor="w", padding=(14, 8))
+                    foreground=p["accent_fg"], anchor="w", padding=(12, 7),
+                    font=(FONT, 10, "bold"), borderwidth=0,
+                    focusthickness=0, relief="flat")
     style.map("Active.Sidebar.TButton",
-              background=[("active", _shade(p["accent"], 0.85))],
+              background=[("active", _shade(p["accent"], 0.86))],
               foreground=[("active", p["accent_fg"])])
 
     for cb in list(_observers):

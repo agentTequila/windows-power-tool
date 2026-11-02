@@ -751,11 +751,18 @@ class IPScannerFrameTests(unittest.TestCase):
         self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
         self.assertEqual(str(self.frame._copy_button.cget("state")),
                          "disabled")
-        # Frame titles pin the section headings.
-        self.assertEqual(str(self.frame._sweep_frame.cget("text")),
-                         "IP block scan")
-        self.assertEqual(str(self.frame._port_frame.cget("text")),
+        # The two scanners live on their own notebook tabs.
+        self.assertEqual(self.frame._notebook.tab(0, "text"), "Block scan")
+        self.assertEqual(self.frame._notebook.tab(1, "text"),
                          "Port scanner")
+        self.assertEqual(
+            str(self.frame._notebook.nametowidget(
+                self.frame._notebook.tabs()[0])),
+            str(self.frame._sweep_frame))
+        self.assertEqual(
+            str(self.frame._notebook.nametowidget(
+                self.frame._notebook.tabs()[1])),
+            str(self.frame._port_frame))
         # Entry widths pin the input layout.
         self.assertEqual(int(self.frame._block_entry.cget("width")), 22)
         self.assertEqual(int(self.frame._host_entry.cget("width")), 18)

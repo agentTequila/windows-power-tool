@@ -134,16 +134,32 @@ class UsbGuardFrame(ttk.Frame):
         ttk.Button(buttons, text="Refresh", command=self.refresh).pack(
             side="left")
 
-        ttk.Label(
-            self, wraplength=660, style="Dim.TLabel",
-            text="Windows reads this policy at startup, so restart the "
-                 "computer after blocking or allowing. Reconnecting a drive "
-                 "alone often is not enough. A domain policy can override "
-                 "the app.",
-        ).grid(row=4, column=0, sticky="w", pady=(4, 12))
+        info = ttk.Frame(self, style="Panel.TFrame", padding=(16, 14))
+        info.grid(row=4, column=0, sticky="ew", pady=(18, 0))
+        info.grid_columnconfigure(1, weight=1)
+        ttk.Label(info, text="AT A GLANCE",
+                  style="PanelHeading.TLabel").grid(
+                      row=0, column=0, columnspan=2, sticky="w",
+                      pady=(0, 8))
+        for index, (label, value) in enumerate((
+                ("Blocks", "Read and write access to USB storage drives"),
+                ("Leaves alone", "Keyboards, mice, printers, network adapters"),
+                ("Applies", "When the drive is next connected"),
+                ("Scope", "This PC, all users")), start=1):
+            ttk.Label(info, text=label, style="PanelDim.TLabel").grid(
+                row=index, column=0, sticky="nw", padx=(0, 18), pady=2)
+            ttk.Label(info, text=value, style="Panel.TLabel").grid(
+                row=index, column=1, sticky="w", pady=2)
+        ttk.Label(info, text="A domain policy can override this setting.",
+                  style="PanelDim.TLabel").grid(
+                      row=5, column=0, columnspan=2, sticky="w",
+                      pady=(8, 0))
 
         self.status = widgets.StatusPane(self)
-        self.status.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        # Keep the status bar at the bottom of the page instead of floating
+        # under the short form.
+        self.grid_rowconfigure(5, weight=1)
+        self.status.grid(row=6, column=0, sticky="ew", pady=(8, 8))
         self.refresh(silent=True)
 
     def refresh(self, silent: bool = False) -> str:
@@ -154,19 +170,21 @@ class UsbGuardFrame(ttk.Frame):
         if not silent:
             if state == STATE_BLOCKED:
                 self.status.set_success(
-                    "USB storage blocked. Restart Windows to enforce it.")
+                    "USB storage blocked. Reconnect the drive to enforce it; "
+                    "restart Windows if it still opens.")
             elif state == STATE_WRITE_PROTECTED:
                 self.status.set_warn(
                     "USB storage is write-protected by policy. Reads still "
-                    "work; Allow USB Storage clears it after a restart.")
+                    "work; Allow USB Storage clears it — reconnect the drive "
+                    "afterwards.")
             elif state == STATE_HIDDEN:
                 self.status.set_warn(
                     "USB storage is hidden by the legacy USBSTOR switch. "
                     "Allow USB Storage turns the driver back on.")
             else:
                 self.status.set_success(
-                    "USB storage allowed. Restart Windows if a drive still "
-                    "refuses access.")
+                    "USB storage allowed. Reconnect the drive; restart "
+                    "Windows if access is still denied.")
         return state
 
     def _set(self, blocked: bool) -> None:
@@ -181,11 +199,12 @@ class UsbGuardFrame(ttk.Frame):
         state = self.refresh(silent=True)
         if blocked and state == STATE_BLOCKED:
             self.status.set_success(
-                "USB storage blocked. Restart Windows to enforce it.")
+                "USB storage blocked. Reconnect the drive to enforce it; "
+                "restart Windows if it still opens.")
         elif not blocked and state == STATE_ALLOWED:
             self.status.set_success(
-                "USB storage allowed. Restart Windows if a drive still "
-                "refuses access.")
+                "USB storage allowed. Reconnect the drive; restart Windows "
+                "if access is still denied.")
         elif state in (STATE_WRITE_PROTECTED, STATE_HIDDEN):
             self.status.set_warn(
                 "The change was written, but USB storage still reports a "
