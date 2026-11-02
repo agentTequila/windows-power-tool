@@ -178,7 +178,9 @@ class RunSweepTests(unittest.TestCase):
         self.assertIsNotNone(payload)
         self.assertEqual(payload["scanned"], 0)
         self.assertEqual(payload["hosts"], [])
-        self.assertEqual(payload["free"], ADDRESSES)
+        # Nothing was probed, so nothing can be called free.
+        self.assertEqual(payload["free"], [])
+        self.assertEqual(payload["unchecked"], ADDRESSES)
 
     def test_stop_mid_scan_still_emits_done(self):
         stop = threading.Event()
@@ -203,8 +205,36 @@ class RunSweepTests(unittest.TestCase):
         self.assertEqual(arp_calls, [])  # ARP fetch skipped on early stop
         host_ips = {h["ip"] for h in payload["hosts"]}
         self.assertTrue(host_ips <= set(ADDRESSES))
-        self.assertEqual(host_ips | set(payload["free"]), set(ADDRESSES))
-        self.assertEqual(host_ips & set(payload["free"]), set())
+        # Checked, free, and unchecked together cover the block exactly;
+        # no address is both free and unchecked.
+        self.assertEqual(host_ips | set(payload["free"])
+                         | set(payload["unchecked"]), set(ADDRESSES))
+        self.assertFalse(host_ips & set(payload["free"]))
+        self.assertFalse(set(payload["free"]) & set(payload["unchecked"]))
+        self.assertFalse(host_ips & set(payload["unchecked"]))
+
+    def test_early_stop_free_covers_only_checked_addresses(self):
+        stop = threading.Event()
+
+        def probe(ip):
+            stop.set()          # stop after this single probe
+            return 12
+
+        messages = []
+        ip_scanner.run_sweep(
+            ADDRESSES, stop, messages.append, workers=1, probe=probe,
+            arp_out=fake_arp, resolver=fake_resolver)
+        payload = self._done(messages)
+        self.assertEqual(payload["scanned"], 1)
+        self.assertEqual([h["ip"] for h in payload["hosts"]],
+                         ["192.168.1.1"])
+        self.assertEqual(payload["free"], [])       # .1 answered
+        self.assertEqual(payload["unchecked"],
+                         ["192.168.1.2", "192.168.1.3"])
+
+    def test_full_sweep_has_no_unchecked_addresses(self):
+        payload = self._done(self._sweep(ADDRESSES, threading.Event()))
+        self.assertEqual(payload["unchecked"], [])
 
     def test_probe_exception_becomes_error_sentinel(self):
         def probe(ip):
@@ -305,7 +335,7 @@ def fake_getserv(port, proto=None):
 def make_connector(open_ports):
     calls = []
 
-    def connector(address, timeout=0.4):
+    def connector(address, *, timeout):
         calls.append((address, timeout))
         if address[1] in open_ports:
             return FakeSocket() if address[1] == 22 else None
@@ -354,6 +384,9 @@ class RunPortScanTests(unittest.TestCase):
         messages = self._scan(SCAN_PORTS, stop, connector)
         self.assertEqual(connector.call_args_list, [])
         self.assertEqual([m for m in messages if m[0] == "progress"], [])
+        kinds = [m[0] for m in messages]
+        self.assertEqual(kinds.count("done"), 1)
+        self.assertEqual(kinds.count("error"), 0)
         payload = self._done(messages)
         self.assertIsNotNone(payload)
         self.assertEqual(payload["open"], [])
@@ -380,6 +413,16 @@ class RunPortScanTests(unittest.TestCase):
         errors = [m for m in messages if m[0] == "error"]
         self.assertEqual(len(errors), 1)
         self.assertIn("kaboom", errors[0][1])
+
+    def test_service_lookup_exception_becomes_error_sentinel(self):
+        connector = make_connector({22})
+        with patch.object(ip_scanner, "port_service",
+                          side_effect=RuntimeError("no service db")):
+            messages = self._scan(SCAN_PORTS, threading.Event(), connector)
+        kinds = [m[0] for m in messages]
+        self.assertEqual(kinds.count("error"), 1)
+        self.assertNotIn("done", kinds)
+        self.assertIn("no service db", messages[-1][1])
 
     def test_progress_and_done_once(self):
         connector = make_connector({22})
@@ -544,11 +587,24 @@ class IPScannerFrameTests(unittest.TestCase):
         self._start_sweep()                          # 192.168.1.0/24
         self.assertEqual(self.frame._sweep_total, 254)
         self.frame._sweep_done({"hosts": [], "free": ["192.168.1.1"],
+                                "unchecked": ["192.168.1.2"],
                                 "scanned": 40})
         # Unprobed addresses must not read as verified-free.
-        self.assertIn("Stopped early — 40 of 254 checked.",
-                      self.frame.status.text())
+        self.assertIn("Stopped early — 40 of 254 checked, 1 free, "
+                      "1 unchecked.", self.frame.status.text())
         self.assertNotIn("Scan finished", self.frame.status.text())
+
+    def test_partial_free_and_unchecked_are_split(self):
+        self._start_sweep()
+        self.frame._sweep_done(
+            {"hosts": [], "free": ["192.168.1.1"],
+             "unchecked": ["192.168.1.2", "192.168.1.3"], "scanned": 1})
+        self.assertEqual(str(self.frame._free_count.cget("text")),
+                         "1 free · 2 unchecked")
+        self.assertEqual(self.frame._free_text.get("1.0", "end").strip(),
+                         "192.168.1.1")
+        self.assertIn("Unchecked (not probed): 192.168.1.2, 192.168.1.3",
+                      self.frame._report)
 
     def test_full_sweep_keeps_normal_finished_text(self):
         self._start_sweep()

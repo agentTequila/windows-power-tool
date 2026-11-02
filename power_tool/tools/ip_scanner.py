@@ -101,14 +101,17 @@ def run_sweep(addresses: list[str], stop_event, put, workers: int = 64,
     terminal sentinel: ("done", payload) on completion or early stop,
     ("error", str(exc)) if anything outside the workers fails (then no
     done). Payload: hosts = ping-alive ∪ in-block ARP hits (ARP-only ⇒
-    ms None), free = addresses − hosts, scanned = probes completed.
+    ms None), free = checked addresses that answered nothing (verified
+    free), unchecked = addresses a stop left unprobed, scanned = probes
+    completed. On a complete sweep unchecked is empty.
     """
     probe = ping_ms if probe is None else probe
     arp_out = _default_arp_out if arp_out is None else arp_out
     resolver = resolve_host if resolver is None else resolver
 
     lock = threading.Lock()
-    state = {"done": 0, "alive": {}, "failure": None, "emitted": False}
+    state = {"done": 0, "alive": {}, "checked": set(), "failure": None,
+             "emitted": False}
     abort = threading.Event()
 
     def emit_terminal(message) -> None:
@@ -137,6 +140,7 @@ def run_sweep(addresses: list[str], stop_event, put, workers: int = 64,
             with lock:
                 if ms is not None:
                     state["alive"][ip] = ms
+                state["checked"].add(ip)
                 state["done"] += 1
                 done, total = state["done"], total_count
             put(("progress", done, total))
@@ -158,25 +162,31 @@ def run_sweep(addresses: list[str], stop_event, put, workers: int = 64,
         with lock:
             failure = state["failure"]
             alive = dict(state["alive"])
+            checked = set(state["checked"])
             scanned = state["done"]
 
         if failure is not None:
             emit_terminal(("error", str(failure)))
             return
 
-        # Early stop skips the ARP fetch for a fast, consistent partial
-        # payload; otherwise merge ARP hits (restricted to the block).
-        arp_hits = {} if stop_event.is_set() else parse_arp_table(arp_out())
         address_set = set(addresses)
+        unchecked = address_set - checked
+        # ARP is merged only when every probe finished: on an early stop
+        # the partial payload stays honest about what was not checked.
+        arp_hits = {} if unchecked else parse_arp_table(arp_out())
         host_ips = set(alive) | {ip for ip in arp_hits if ip in address_set}
         hosts = [
             {"ip": ip, "hostname": resolver(ip), "mac": arp_hits.get(ip),
              "ms": alive.get(ip)}
             for ip in sorted(host_ips, key=_ip_order)
         ]
-        free = [ip for ip in sorted(address_set, key=_ip_order)
+        # "free" means verified free: probed and answered nothing. An
+        # address a stop left unprobed belongs in "unchecked", never here.
+        free = [ip for ip in sorted(checked, key=_ip_order)
                 if ip not in host_ips]
+        unchecked_list = sorted(unchecked, key=_ip_order)
         emit_terminal(("done", {"hosts": hosts, "free": free,
+                                "unchecked": unchecked_list,
                                 "scanned": scanned}))
     except BaseException as exc:  # never raise out of run_sweep
         emit_terminal(("error", str(exc)))
@@ -289,15 +299,25 @@ def run_port_scan(host: str, ports: list[int], stop_event, put,
                 abort.set()
                 return
             try:
-                with lock:
-                    state["open"][port] = port_service(port)
-                    state["done"] += 1
-                    done, total = state["done"], total_count
+                try:
+                    with lock:
+                        state["open"][port] = port_service(port)
+                        state["done"] += 1
+                        done, total = state["done"], total_count
+                except BaseException as exc:  # never raise out of a worker
+                    with lock:
+                        if state["failure"] is None:
+                            state["failure"] = exc
+                    abort.set()
+                    return
             finally:
                 # Fakes may return None or a bare Mock, so only close
                 # what actually looks like a socket.
                 if hasattr(sock, "close"):
-                    sock.close()
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
             put(("progress", done, total))
 
     try:
@@ -508,6 +528,7 @@ class IPScannerFrame(ttk.Frame):
         self._sweep_button.configure(text="Scan", command=self._start_sweep)
         hosts = payload.get("hosts", [])
         free = payload.get("free", [])
+        unchecked = payload.get("unchecked", [])
         scanned = int(payload.get("scanned", 0))
         self._hosts_tree.delete(*self._hosts_tree.get_children())
         for host in hosts:
@@ -516,20 +537,27 @@ class IPScannerFrame(ttk.Frame):
                 host.get("ip", ""), host.get("hostname") or "-",
                 host.get("mac") or "-",
                 "-" if ms is None else ms))
-        self._free_count.configure(
-            text=f"{len(free)} free of {len(hosts) + len(free)}")
+        if unchecked:
+            self._free_count.configure(
+                text=f"{len(free)} free · {len(unchecked)} unchecked")
+        else:
+            self._free_count.configure(
+                text=f"{len(free)} free of {len(hosts) + len(free)}")
         self._free_text.configure(state="normal")
         self._free_text.delete("1.0", "end")
         self._free_text.insert("1.0", ", ".join(free))
         self._free_text.configure(state="disabled")
-        self._report = self._build_report(hosts, free)
+        self._report = self._build_report(hosts, free, unchecked)
         self._copy_button.configure(state="normal")
         total = self._sweep_total
         if total is not None and scanned < total:
-            # Stopped early: the unprobed addresses are NOT verified
-            # free, so say how much was actually checked.
+            # Unprobed addresses are NOT verified free: report them apart
+            # from the free list so nothing reads as confirmed.
+            remaining = (len(unchecked) if unchecked
+                         else max(total - scanned, 0))
             self.status.set_success(
-                f"Stopped early — {scanned} of {total} checked.")
+                f"Stopped early — {scanned} of {total} checked, "
+                f"{len(free)} free, {remaining} unchecked.")
         else:
             self.status.set_success(
                 f"Scan finished. {len(hosts)} hosts live, {len(free)} free.")
@@ -540,7 +568,8 @@ class IPScannerFrame(ttk.Frame):
         self.status.set_error(str(message))
 
     @staticmethod
-    def _build_report(hosts: list, free: list) -> str:
+    def _build_report(hosts: list, free: list,
+                      unchecked: list | None = None) -> str:
         lines = ["IP  Hostname  MAC  Ping ms"]
         for host in hosts:
             ms = host.get("ms")
@@ -549,6 +578,8 @@ class IPScannerFrame(ttk.Frame):
                          f"{host.get('mac') or '-'}  "
                          f"{'-' if ms is None else ms}")
         lines.append("Free IPs: " + ", ".join(free))
+        if unchecked:
+            lines.append("Unchecked (not probed): " + ", ".join(unchecked))
         return "\n".join(lines)
 
     def _copy_report(self) -> None:
