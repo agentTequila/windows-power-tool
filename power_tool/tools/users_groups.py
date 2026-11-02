@@ -92,11 +92,17 @@ def validate_password(password: str, confirm: str) -> str | None:
     return None
 
 
-def add_user_scripts(name: str, password: str, to_admin: bool) -> list[str]:
+def _add_user_commands(name: str, password_expression: str,
+                       to_admin: bool) -> list[str]:
+    """Build the New-LocalUser scripts around a password expression.
+
+    One builder serves both the executable scripts (quoted real password)
+    and the confirm-dialog preview (literal ****), so the two shapes can
+    never drift apart.
+    """
     scripts = [f"New-LocalUser -Name {runner.ps_quote(name)} "
-               f"-Password (ConvertTo-SecureString "
-               f"{runner.ps_quote(password)} -AsPlainText -Force) "
-               f"-AccountNeverExpires"]
+               f"-Password (ConvertTo-SecureString {password_expression} "
+               f"-AsPlainText -Force) -AccountNeverExpires"]
     if to_admin:
         scripts.append(
             f"Add-LocalGroupMember "
@@ -105,16 +111,12 @@ def add_user_scripts(name: str, password: str, to_admin: bool) -> list[str]:
     return scripts
 
 
+def add_user_scripts(name: str, password: str, to_admin: bool) -> list[str]:
+    return _add_user_commands(name, runner.ps_quote(password), to_admin)
+
+
 def add_user_display(name: str, to_admin: bool) -> list[str]:
-    lines = [f"New-LocalUser -Name {runner.ps_quote(name)} "
-             f"-Password (ConvertTo-SecureString **** -AsPlainText -Force) "
-             f"-AccountNeverExpires"]
-    if to_admin:
-        lines.append(
-            f"Add-LocalGroupMember "
-            f"-Group {runner.ps_quote('Administrators')} "
-            f"-Member {runner.ps_quote(name)}")
-    return lines
+    return _add_user_commands(name, "****", to_admin)
 
 
 def gather() -> dict:
@@ -375,12 +377,13 @@ class UsersGroupsFrame(ttk.Frame):
         if message:
             self.status.set_error(message)
             return
-        password = simpledialog.askstring("Add user", "Password:", show="*")
+        password = simpledialog.askstring(
+            "Add user", "Password:", show="*", parent=self)
         if password is None:
             self.status.set_idle("Cancelled.")
             return
         confirm_password = simpledialog.askstring(
-            "Add user", "Confirm password:", show="*")
+            "Add user", "Confirm password:", show="*", parent=self)
         if confirm_password is None:
             self.status.set_idle("Cancelled.")
             return
@@ -389,7 +392,8 @@ class UsersGroupsFrame(ttk.Frame):
             self.status.set_error(message)
             return
         to_admin = messagebox.askyesno(
-            "Add user", "Add this account to the Administrators group?")
+            "Add user", "Add this account to the Administrators group?",
+            parent=self)
         if not widgets.guard_admin(self.status):
             return
         preview = "\n".join(add_user_display(name, to_admin))
@@ -405,7 +409,15 @@ class UsersGroupsFrame(ttk.Frame):
             work=partial(run_scripts,
                          add_user_scripts(name, password, to_admin)),
             on_done=lambda _: self._action_done(f"User '{name}' created."),
-            on_error=self._action_error).start()
+            on_error=lambda exc: self._add_user_error(exc, password)).start()
+
+    def _add_user_error(self, exc: BaseException, password: str) -> None:
+        """Surface a creation failure without ever echoing the password."""
+        self._set_busy(False)
+        detail = str(exc)
+        if password:
+            detail = detail.replace(password, "****")
+        self.status.set_error(f"Adding user failed: {detail}")
 
 
 def create(parent: ttk.Frame) -> ttk.Frame:

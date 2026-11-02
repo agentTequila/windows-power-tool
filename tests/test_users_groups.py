@@ -147,6 +147,13 @@ class AddUserDisplayTests(unittest.TestCase):
                          lines[0])  # no real key material
         self.assertIn("New-LocalUser -Name 'bob'", lines[0])
 
+    def test_display_is_the_script_shape_with_the_password_masked(self):
+        scripts = users_groups.add_user_scripts("bob", "s3cret", True)
+        display = users_groups.add_user_display("bob", True)
+        self.assertEqual(
+            display,
+            [script.replace("'s3cret'", "****") for script in scripts])
+
 
 class GatherTests(unittest.TestCase):
     @patch.object(users_groups.runner, "run_powershell_checked")
@@ -537,6 +544,34 @@ class AddUserFlowTests(unittest.TestCase):
         self.assertEqual(str(button.cget("state")), "disabled")
         self.frame._set_busy(False)
         self.assertEqual(str(button.cget("state")), "normal")
+
+    def test_every_prompt_is_parented_to_the_tool(self):
+        with patch.object(users_groups.simpledialog, "askstring",
+                          side_effect=["bob", "s3cret", "s3cret"]) as fake_ask, \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True) as fake_admin, \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=False):
+            self.frame._add_user()
+        self.assertEqual(fake_ask.call_count, 3)
+        for call in fake_ask.call_args_list:
+            self.assertIs(call.kwargs.get("parent"), self.frame)
+        self.assertIs(fake_admin.call_args.kwargs.get("parent"), self.frame)
+
+    def test_failure_redacts_password_from_status(self):
+        with self._prompts(), \
+             patch.object(users_groups.messagebox, "askyesno",
+                          return_value=True), \
+             patch.object(users_groups.widgets, "confirm",
+                          return_value=True):
+            self.frame._add_user()
+        on_error = self.fake_task.call_args.kwargs["on_error"]
+        on_error(RuntimeError("New-LocalUser failed near 's3cret'"))
+        self.assertNotIn("s3cret", self.frame.status.text())
+        self.assertIn("****", self.frame.status.text())
+        self.assertIn("Adding user failed", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
 
 
 if __name__ == "__main__":
