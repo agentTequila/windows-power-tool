@@ -4,6 +4,8 @@
 
 A portable Windows admin toolbox that always runs elevated. Python and tkinter, one exe, fourteen tools, no runtime dependencies.
 
+![Windows Power Tool with the IP Scanner open](assets/screenshots/dark-ip-scanner.png)
+
 ## Download
 
 Get **WindowsPowerTool.exe** from the [latest release](https://github.com/agentTequila/windows-power-tool/releases/latest) and run it. Windows asks for Administrator rights through UAC, which is expected: the tool needs them.
