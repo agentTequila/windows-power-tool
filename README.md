@@ -21,7 +21,7 @@ Get **WindowsPowerTool.exe** from the [latest release](https://github.com/agentT
 
 | Tool | What it does |
 |---|---|
-| **USB Guard** | Blocks USB storage through the Windows Removable Disks policy (read and write). A blocked drive still shows up in This PC, but opening it gives Access Denied. Keyboards, mice and printers are never touched. Windows applies the policy at restart. |
+| **USB Guard** | Blocks USB storage through the Windows Removable Disks policy (read and write). A blocked drive still shows up in This PC, but opening it gives Access Denied. Keyboards, mice and printers are never touched. Reconnect the drive after a change; some builds need a restart. |
 | **Windows Speedup** | Clears `%TEMP%`, `Windows\Temp`, Recent and Prefetch. Optionally wipes browser cache and cookies (Chrome, Edge, Firefox) and opens the browser again after. Pick clean-only or clean-and-reboot, the reboot coming with a 10-second countdown you can cancel. |
 | **Log Collector** | Grabs Application/System/Security/Setup event logs from the last N minutes, filtered by level. Saves as `.txt`, `.csv`, or native `.evtx`. |
 | **System Info** | Hostname, OS, IPs and MAC addresses, local users and groups, hardware, storage (removable included), uptime. Copy it or save to a text file. |
@@ -80,7 +80,7 @@ Output lands in `dist\WindowsPowerTool.exe` (onefile, no console, asks for admin
 - Nothing gets written next to the exe. Your theme choice lives in `%LOCALAPPDATA%\WindowsPowerTool\settings.json`.
 - Locked or in-use files are always skipped. Nothing is ever force-deleted.
 - Service control, account changes, uninstall, leftover removal and restore points: all confirm first. Reads, refreshes and scans never prompt.
-- USB Guard writes the Removable Disks policy, which Windows enforces at restart. It works on Pro, Enterprise and Education; Windows Home does not expose that policy.
+- USB Guard writes the Removable Disks policy. Reconnect the drive after blocking or allowing; if Windows still enforces the old state, restart. It works on Pro, Enterprise and Education; Windows Home does not expose that policy.
 - The IP Scanner only reads: one ping per address, the local ARP table, and TCP connection attempts. It never changes a host.
 
 ## License
