@@ -73,7 +73,7 @@ pip install -r requirements.txt
 pyinstaller --noconfirm build.spec
 ```
 
-Output lands in `dist\WindowsPowerTool.exe` (onefile, no console, asks for admin on launch). To regenerate the app icon, run `python assets/generate_icon.py`, which needs Pillow.
+Output lands in `dist\WindowsPowerTool.exe` (onefile, no console, asks for admin on launch). To regenerate the app icon, run `python assets/generate_icon.py`, which needs Pillow. The sidebar icons live in `assets/icons/` and are rebuilt by `python assets/generate_icons.py`.
 
 ## Notes
 
