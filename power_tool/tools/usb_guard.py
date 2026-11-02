@@ -1,9 +1,10 @@
-from tkinter import ttk
-
 import winreg
+from tkinter import ttk
 
 from power_tool.core import widgets
 
+# Removable Disks class (GUID_DEVCLASS_DISKDRIVE): the policy that covers
+# USB mass-storage volumes without touching keyboards, mice or printers.
 CLASS_GUID = "{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}"
 POLICY_PATH = (rf"SOFTWARE\Policies\Microsoft\Windows\RemovableStorageDevices"
                rf"\{CLASS_GUID}")
@@ -13,18 +14,75 @@ DENY_WRITE = "Deny_Write"
 KEY_PATH = r"SYSTEM\CurrentControlSet\Services\USBSTOR"
 VALUE_NAME = "Start"
 ENABLED = 3
+HIDDEN = 4
 _READ_FLAGS = winreg.KEY_READ | winreg.KEY_WOW64_64KEY
 _WRITE_FLAGS = winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
 
+STATE_ALLOWED = "allowed"
+STATE_BLOCKED = "blocked"
+STATE_WRITE_PROTECTED = "write_protected"
+STATE_HIDDEN = "hidden"
 
-def is_blocked() -> bool:
+_STATE_TEXT = {
+    STATE_BLOCKED: ("USB storage: BLOCKED — visible, access denied",
+                    "Error.TLabel"),
+    STATE_WRITE_PROTECTED: ("USB storage: WRITE-PROTECTED — reads still work",
+                            "Warn.TLabel"),
+    STATE_HIDDEN: ("USB storage: HIDDEN — legacy USBSTOR block",
+                   "Warn.TLabel"),
+    STATE_ALLOWED: ("USB storage: ALLOWED", "Success.TLabel"),
+}
+
+
+def _query_dword(key, name: str) -> int:
+    try:
+        value, _ = winreg.QueryValueEx(key, name)
+        return int(value)
+    except (OSError, ValueError):
+        return 0
+
+
+def _policy_flags() -> tuple[int, int]:
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, POLICY_PATH, 0,
                             _READ_FLAGS) as key:
-            value, _ = winreg.QueryValueEx(key, DENY_READ)
-            return int(value) == 1
+            return _query_dword(key, DENY_READ), _query_dword(key, DENY_WRITE)
+    except OSError:
+        return 0, 0
+
+
+def driver_start() -> int | None:
+    """The USBSTOR Start value, or None when the key does not exist."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, KEY_PATH, 0,
+                            _READ_FLAGS) as key:
+            value, _ = winreg.QueryValueEx(key, VALUE_NAME)
+            return int(value)
     except (OSError, ValueError):
-        return False
+        return None
+
+
+def read_state() -> str:
+    """One of allowed, blocked, write_protected or hidden.
+
+    Deny_Read is the full block this tool writes. A Deny_Write-only value
+    from another tool is reported separately so the UI does not call a
+    read-only drive "blocked". Start=4 is what older builds wrote; it hides
+    the drive instead of denying access, so it gets its own label.
+    """
+    deny_read, deny_write = _policy_flags()
+    if deny_read:
+        return STATE_BLOCKED
+    if deny_write:
+        return STATE_WRITE_PROTECTED
+    if driver_start() == HIDDEN:
+        return STATE_HIDDEN
+    return STATE_ALLOWED
+
+
+def is_blocked() -> bool:
+    """True when USB storage is blocked or hidden by either mechanism."""
+    return read_state() in (STATE_BLOCKED, STATE_HIDDEN)
 
 
 def _ensure_driver_enabled() -> None:
@@ -72,37 +130,44 @@ class UsbGuardFrame(ttk.Frame):
         ttk.Button(buttons, text="Block USB Storage", style="Danger.TButton",
                    command=self._block).pack(side="left", padx=(0, 8))
         ttk.Button(buttons, text="Allow USB Storage", style="Accent.TButton",
-                   command=self._unblock).pack(side="left")
+                   command=self._unblock).pack(side="left", padx=(0, 8))
+        ttk.Button(buttons, text="Refresh", command=self.refresh).pack(
+            side="left")
 
         ttk.Label(
             self, wraplength=660, style="Dim.TLabel",
-            text="Windows applies this when a drive is mounted: after "
-                 "toggling, unplug any connected drive and plug it back in.",
+            text="Windows reads this policy at startup, so restart the "
+                 "computer after blocking or allowing. Reconnecting a drive "
+                 "alone often is not enough. A domain policy can override "
+                 "the app.",
         ).grid(row=4, column=0, sticky="w", pady=(4, 12))
 
         self.status = widgets.StatusPane(self)
         self.status.grid(row=5, column=0, sticky="ew", pady=(8, 0))
-        _ensure_driver_enabled()
         self.refresh(silent=True)
 
-    def refresh(self, silent: bool = False) -> None:
-        if is_blocked():
-            self._indicator.configure(style="Error.TLabel")
-            self._state_label.configure(
-                text="USB storage: BLOCKED — visible, access denied",
-                style="Error.TLabel")
-            if not silent:
+    def refresh(self, silent: bool = False) -> str:
+        state = read_state()
+        text, style = _STATE_TEXT[state]
+        self._indicator.configure(style=style)
+        self._state_label.configure(text=text, style=style)
+        if not silent:
+            if state == STATE_BLOCKED:
                 self.status.set_success(
-                    "USB storage blocked. Replug any connected drive — it "
-                    "then stays visible but opening it is denied.")
-        else:
-            self._indicator.configure(style="Success.TLabel")
-            self._state_label.configure(text="USB storage: ALLOWED",
-                                        style="Success.TLabel")
-            if not silent:
+                    "USB storage blocked. Restart Windows to enforce it.")
+            elif state == STATE_WRITE_PROTECTED:
+                self.status.set_warn(
+                    "USB storage is write-protected by policy. Reads still "
+                    "work; Allow USB Storage clears it after a restart.")
+            elif state == STATE_HIDDEN:
+                self.status.set_warn(
+                    "USB storage is hidden by the legacy USBSTOR switch. "
+                    "Allow USB Storage turns the driver back on.")
+            else:
                 self.status.set_success(
-                    "USB storage allowed. Replug any connected drive to "
-                    "regain access.")
+                    "USB storage allowed. Restart Windows if a drive still "
+                    "refuses access.")
+        return state
 
     def _set(self, blocked: bool) -> None:
         if not widgets.guard_admin(self.status):
@@ -113,7 +178,22 @@ class UsbGuardFrame(ttk.Frame):
             self.status.set_error(f"Registry write failed: {exc}")
             self.refresh(silent=True)
             return
-        self.refresh()
+        state = self.refresh(silent=True)
+        if blocked and state == STATE_BLOCKED:
+            self.status.set_success(
+                "USB storage blocked. Restart Windows to enforce it.")
+        elif not blocked and state == STATE_ALLOWED:
+            self.status.set_success(
+                "USB storage allowed. Restart Windows if a drive still "
+                "refuses access.")
+        elif state in (STATE_WRITE_PROTECTED, STATE_HIDDEN):
+            self.status.set_warn(
+                "The change was written, but USB storage still reports a "
+                "restriction. Another policy may be overriding it.")
+        else:
+            self.status.set_error(
+                "The change was written but could not be confirmed. "
+                "Restart Windows and check again.")
 
     def _block(self) -> None:
         self._set(True)
