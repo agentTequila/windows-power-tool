@@ -357,10 +357,10 @@ class IPScannerFrame(ttk.Frame):
                  "open to the network.",
         ).pack(anchor="w", pady=(6, 12))
 
-        block_section = ttk.LabelFrame(self, text="IP block scan",
-                                       padding=10)
-        block_section.pack(fill="x", pady=(0, 10))
-        sweep_row = ttk.Frame(block_section)
+        self._sweep_frame = ttk.LabelFrame(self, text="IP block scan",
+                                           padding=10)
+        self._sweep_frame.pack(fill="x", pady=(0, 10))
+        sweep_row = ttk.Frame(self._sweep_frame)
         sweep_row.pack(fill="x", pady=(0, 6))
         ttk.Label(sweep_row, text="Block:").pack(side="left")
         self._block_entry = ttk.Entry(sweep_row, width=22)
@@ -378,7 +378,7 @@ class IPScannerFrame(ttk.Frame):
         self._copy_button.pack(side="left")
 
         self._hosts_tree = ttk.Treeview(
-            block_section, columns=("ip", "hostname", "mac", "ms"),
+            self._sweep_frame, columns=("ip", "hostname", "mac", "ms"),
             show="headings", height=6)
         for column, width, heading in (("ip", 110, "IP"),
                                        ("hostname", 230, "Hostname"),
@@ -388,7 +388,7 @@ class IPScannerFrame(ttk.Frame):
             self._hosts_tree.column(column, width=width, anchor="w")
         self._hosts_tree.pack(fill="x", pady=(0, 6))
 
-        free_row = ttk.Frame(block_section)
+        free_row = ttk.Frame(self._sweep_frame)
         free_row.pack(fill="x")
         ttk.Label(free_row, text="Free IPs:").pack(side="left")
         self._free_count = ttk.Label(free_row, style="Dim.TLabel",
@@ -396,16 +396,17 @@ class IPScannerFrame(ttk.Frame):
         self._free_count.pack(side="left", padx=8)
         palette = theme.current_palette()
         self._free_text = tk.Text(
-            block_section, wrap="word", height=3, font=("Consolas", 10),
+            self._sweep_frame, wrap="word", height=3, font=("Consolas", 10),
             bg=palette["entry_bg"], fg=palette["fg"],
             insertbackground=palette["fg"], relief="flat", padx=10, pady=6,
             state="disabled")
         self._free_text.pack(fill="x", pady=(6, 0))
         theme.observe(self._on_theme)
 
-        port_section = ttk.LabelFrame(self, text="Port scanner", padding=10)
-        port_section.pack(fill="x", pady=(0, 10))
-        port_row = ttk.Frame(port_section)
+        self._port_frame = ttk.LabelFrame(self, text="Port scanner",
+                                          padding=10)
+        self._port_frame.pack(fill="x", pady=(0, 10))
+        port_row = ttk.Frame(self._port_frame)
         port_row.pack(fill="x", pady=(0, 6))
         ttk.Label(port_row, text="Host:").pack(side="left")
         self._host_entry = ttk.Entry(port_row, width=18)
@@ -422,7 +423,7 @@ class IPScannerFrame(ttk.Frame):
         self._port_progress.pack(side="left")
 
         self._ports_tree = ttk.Treeview(
-            port_section, columns=("port", "service"), show="headings",
+            self._port_frame, columns=("port", "service"), show="headings",
             height=5)
         for column, width, heading in (("port", 90, "Port"),
                                        ("service", 180, "Service")):
@@ -516,7 +517,7 @@ class IPScannerFrame(ttk.Frame):
                 host.get("mac") or "-",
                 "-" if ms is None else ms))
         self._free_count.configure(
-            text=f"{len(free)} free of {scanned + len(free)}")
+            text=f"{len(free)} free of {len(hosts) + len(free)}")
         self._free_text.configure(state="normal")
         self._free_text.delete("1.0", "end")
         self._free_text.insert("1.0", ", ".join(free))

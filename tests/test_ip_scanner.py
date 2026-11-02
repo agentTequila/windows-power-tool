@@ -498,7 +498,7 @@ class IPScannerFrameTests(unittest.TestCase):
                                                            "values")),
                          ("192.168.1.2", "192.168.1.2", "-", "-"))
         self.assertEqual(str(self.frame._free_count.cget("text")),
-                         "1 free of 4")
+                         "1 free of 3")
         self.assertEqual(self.frame._free_text.get("1.0", "end").strip(),
                          "192.168.1.3")
         self.assertIn("Scan finished. 2 hosts live, 1 free.",
@@ -554,6 +554,20 @@ class IPScannerFrameTests(unittest.TestCase):
         self._start_sweep()
         self.frame._sweep_done({"hosts": [], "free": [], "scanned": 254})
         self.assertIn("Scan finished. 0 hosts live, 0 free.",
+                      self.frame.status.text())
+
+    def test_free_count_denominator_is_hosts_plus_free(self):
+        # scanned counts every probed address (live hosts included), so
+        # the label denominator must be hosts+free — the old
+        # scanned+free double-counted the hosts (a full /24 read
+        # "249 free of 503").
+        self.frame._sweep_done(
+            {"hosts": [dict(h) for h in SWEEP_HOSTS],
+             "free": ["192.168.1.3", "192.168.1.4", "192.168.1.5"],
+             "scanned": 200})
+        self.assertEqual(str(self.frame._free_count.cget("text")),
+                         "3 free of 5")
+        self.assertIn("Scan finished. 2 hosts live, 3 free.",
                       self.frame.status.text())
 
     def test_drain_updates_progressbar_and_working_text(self):
@@ -616,6 +630,22 @@ class IPScannerFrameTests(unittest.TestCase):
         self.assertEqual(self.frame._ports_tree.get_children(), ())
         self.assertIn("No open ports found.", self.frame.status.text())
 
+    def test_port_stop_sets_event_then_sentinel_flips_button(self):
+        with patch.object(ip_scanner.threading, "Thread"):
+            self.frame._host_entry.insert(0, "example.com")
+            self.frame._ports_entry.insert(0, "22")
+            self.frame._start_port()
+        event = self.frame._port_stop
+        self.frame._port_button.invoke()
+        self.assertTrue(event.is_set())
+        # The toggle only flips back when the terminal sentinel lands,
+        # mirroring the sweep section's Stop behavior.
+        self.assertEqual(str(self.frame._port_button.cget("text")), "Stop")
+        self.frame._port_error("cancelled")
+        self.assertEqual(str(self.frame._port_button.cget("text")), "Scan")
+        self.assertEqual(str(self.frame._host_entry.cget("state")),
+                         "normal")
+
     def test_port_host_empty_warns(self):
         with patch.object(ip_scanner.threading, "Thread") as fake_thread:
             self.frame._ports_entry.insert(0, "22,80")
@@ -665,6 +695,44 @@ class IPScannerFrameTests(unittest.TestCase):
         self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
         self.assertEqual(str(self.frame._copy_button.cget("state")),
                          "disabled")
+        # Frame titles pin the section headings.
+        self.assertEqual(str(self.frame._sweep_frame.cget("text")),
+                         "IP block scan")
+        self.assertEqual(str(self.frame._port_frame.cget("text")),
+                         "Port scanner")
+        # Entry widths pin the input layout.
+        self.assertEqual(int(self.frame._block_entry.cget("width")), 22)
+        self.assertEqual(int(self.frame._host_entry.cget("width")), 18)
+        self.assertEqual(int(self.frame._ports_entry.cget("width")), 14)
+
+    def test_port_error_reenables_first(self):
+        # Start a port scan (thread patched out) so the section is busy,
+        # then land the error sentinel: the widgets must already read
+        # re-enabled at the moment the status error fires.
+        with patch.object(ip_scanner.threading, "Thread"):
+            self.frame._host_entry.insert(0, "example.com")
+            self.frame._ports_entry.insert(0, "22")
+            self.frame._start_port()
+        seen = {}
+        real_error = self.frame.status.set_error
+
+        def spy(message):
+            seen["host"] = str(self.frame._host_entry.cget("state"))
+            seen["ports"] = str(self.frame._ports_entry.cget("state"))
+            seen["button"] = str(self.frame._port_button.cget("text"))
+            real_error(message)
+
+        with patch.object(self.frame.status, "set_error", side_effect=spy):
+            self.frame._port_error("boom")
+        self.assertEqual(seen["host"], "normal")     # re-enabled FIRST
+        self.assertEqual(seen["ports"], "normal")
+        self.assertEqual(seen["button"], "Scan")
+        self.assertIn("boom", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+        self.assertEqual(str(self.frame._host_entry.cget("state")),
+                         "normal")
+        self.assertEqual(str(self.frame._port_button.cget("text")), "Scan")
 
     def test_create_returns_frame(self):
         frame = ip_scanner.create(self.root)
