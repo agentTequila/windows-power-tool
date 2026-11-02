@@ -1,7 +1,8 @@
 from power_tool.tools import (console, disk_cleanup, installed_apps,
-                              license_info, log_collector, network,
-                              processes, restore_point, services, speedup,
-                              system_info, usb_guard, users_groups)
+                              ip_scanner, license_info, log_collector,
+                              network, processes, restore_point, services,
+                              speedup, system_info, usb_guard,
+                              users_groups)
 
 REGISTRY: list = [
     ("Core", [
@@ -12,6 +13,7 @@ REGISTRY: list = [
     ]),
     ("Admin", [
         ("Network", network),
+        ("IP Scanner", ip_scanner),
         ("Console", console),
         ("Installed Apps", installed_apps),
         ("Users & Groups", users_groups),

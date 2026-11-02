@@ -2,7 +2,9 @@ import threading
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 
-from power_tool.core import runner
+import tkinter as tk
+
+from power_tool.core import runner, theme
 from power_tool.tools import ip_scanner
 
 
@@ -402,6 +404,271 @@ class RunPortScanTests(unittest.TestCase):
         self.assertEqual(sorted(by_port), SCAN_PORTS)
         for timeout in by_port.values():
             self.assertEqual(timeout, 0.4)
+
+
+SWEEP_HOSTS = [
+    {"ip": "192.168.1.1", "hostname": "box1.lan",
+     "mac": "AA-BB-CC-DD-EE-FF", "ms": 12},
+    {"ip": "192.168.1.2", "hostname": "192.168.1.2",
+     "mac": None, "ms": None},
+]
+SWEEP_PAYLOAD = {"hosts": [dict(h) for h in SWEEP_HOSTS],
+                 "free": ["192.168.1.3"], "scanned": 3}
+
+
+class IPScannerFrameTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tk.Tk()
+        cls.root.withdraw()
+        theme.apply_theme(cls.root, "dark")
+
+    @classmethod
+    def tearDownClass(cls):
+        # Scan starts leave a self-rescheduling after(100, drain) poll
+        # pending (worker threads are patched out in these tests). Cancel
+        # each pending timer by id before destroy — the console frame's
+        # trick — so a later event pump can't fire them against a dead
+        # root and print "invalid command name" on stderr.
+        tk_id = cls.root.tk
+        for after_id in tk_id.splitlist(tk_id.call("after", "info")):
+            tk_id.call("after", "cancel", after_id)
+        cls.root.destroy()
+
+    def setUp(self):
+        self.frame = ip_scanner.IPScannerFrame(self.root)
+
+    def _start_sweep(self, block="192.168.1.0/24"):
+        """Start a block sweep with the worker thread patched out."""
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._block_entry.insert(0, block)
+            self.frame._start_sweep()
+        return fake_thread
+
+    # --- block scan ---------------------------------------------------
+    def test_bad_block_reports_error_no_thread(self):
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._block_entry.insert(0, "999.1.1.1")
+            self.frame._start_sweep()
+        fake_thread.assert_not_called()
+        self.assertIn("192.168.1.0/24", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_block_scan_starts_thread_and_toggles(self):
+        fake_thread = self._start_sweep()
+        fake_thread.assert_called_once()
+        kwargs = fake_thread.call_args.kwargs
+        self.assertIs(kwargs["target"], ip_scanner.run_sweep)
+        self.assertTrue(kwargs["daemon"])
+        args = kwargs["args"]
+        self.assertEqual(len(args[0]), 254)
+        self.assertFalse(args[1].is_set())          # fresh stop event
+        self.assertEqual(args[2], self.frame._sweep_queue.put)
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Stop")
+        self.assertEqual(str(self.frame._block_entry.cget("state")),
+                         "disabled")
+        self.assertEqual(float(self.frame._sweep_progress.cget("maximum")),
+                         254.0)
+
+    def test_done_payload_fills_trees_and_counts(self):
+        # Simulate a running sweep first so "re-enable FIRST" is visible.
+        self.frame._set_sweep_busy(True)
+        self.frame._sweep_button.configure(
+            text="Stop", command=self.frame._stop_sweep)
+        seen = {}
+        real_success = self.frame.status.set_success
+
+        def spy(message):
+            seen["entry"] = str(self.frame._block_entry.cget("state"))
+            seen["button"] = str(self.frame._sweep_button.cget("text"))
+            real_success(message)
+
+        with patch.object(self.frame.status, "set_success", side_effect=spy):
+            self.frame._sweep_done(dict(SWEEP_PAYLOAD))
+        self.assertEqual(seen["entry"], "normal")    # re-enabled FIRST
+        self.assertEqual(seen["button"], "Scan")
+        rows = self.frame._hosts_tree.get_children()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(tuple(self.frame._hosts_tree.item(rows[0],
+                                                           "values")),
+                         ("192.168.1.1", "box1.lan", "AA-BB-CC-DD-EE-FF",
+                          "12"))
+        self.assertEqual(tuple(self.frame._hosts_tree.item(rows[1],
+                                                           "values")),
+                         ("192.168.1.2", "192.168.1.2", "-", "-"))
+        self.assertEqual(str(self.frame._free_count.cget("text")),
+                         "1 free of 4")
+        self.assertEqual(self.frame._free_text.get("1.0", "end").strip(),
+                         "192.168.1.3")
+        self.assertIn("Scan finished. 2 hosts live, 1 free.",
+                      self.frame.status.text())
+        self.assertEqual(str(self.frame._copy_button.cget("state")),
+                         "normal")
+        self.assertEqual(str(self.frame._block_entry.cget("state")),
+                         "normal")
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
+
+    def test_stop_sets_event(self):
+        self._start_sweep()
+        event = self.frame._sweep_stop
+        self.frame._sweep_button.invoke()
+        self.assertTrue(event.is_set())
+        # The toggle only flips back when the terminal sentinel lands,
+        # mirroring network's ping Start/Stop.
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Stop")
+        self.frame._sweep_done({"hosts": [], "free": [], "scanned": 5})
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
+
+    def test_error_sentinel_reenables_first(self):
+        self._start_sweep()
+        seen = {}
+        real_error = self.frame.status.set_error
+
+        def spy(message):
+            seen["entry"] = str(self.frame._block_entry.cget("state"))
+            seen["button"] = str(self.frame._sweep_button.cget("text"))
+            real_error(message)
+
+        with patch.object(self.frame.status, "set_error", side_effect=spy):
+            self.frame._sweep_error("disk exploded")
+        self.assertEqual(seen["entry"], "normal")    # re-enabled FIRST
+        self.assertEqual(seen["button"], "Scan")
+        self.assertIn("disk exploded", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+        self.assertEqual(str(self.frame._block_entry.cget("state")),
+                         "normal")
+
+    def test_stopped_early_labels_partial_sweep(self):
+        self._start_sweep()                          # 192.168.1.0/24
+        self.assertEqual(self.frame._sweep_total, 254)
+        self.frame._sweep_done({"hosts": [], "free": ["192.168.1.1"],
+                                "scanned": 40})
+        # Unprobed addresses must not read as verified-free.
+        self.assertIn("Stopped early — 40 of 254 checked.",
+                      self.frame.status.text())
+        self.assertNotIn("Scan finished", self.frame.status.text())
+
+    def test_full_sweep_keeps_normal_finished_text(self):
+        self._start_sweep()
+        self.frame._sweep_done({"hosts": [], "free": [], "scanned": 254})
+        self.assertIn("Scan finished. 0 hosts live, 0 free.",
+                      self.frame.status.text())
+
+    def test_drain_updates_progressbar_and_working_text(self):
+        self._start_sweep()
+        self.frame._sweep_queue.put(("progress", 3, 254))
+        self.frame._drain_sweep()
+        self.assertEqual(float(self.frame._sweep_progress.cget("value")),
+                         3.0)
+        self.assertIn("Scanning… 3/254", self.frame.status.text())
+
+    def test_copy_report_contains_hosts_and_free(self):
+        self.frame._sweep_done(dict(SWEEP_PAYLOAD))
+        with patch.object(ip_scanner.widgets, "copy_text") as fake_copy:
+            self.frame._copy_report()
+        fake_copy.assert_called_once()
+        text = fake_copy.call_args.args[1]
+        self.assertIn("IP  Hostname  MAC  Ping ms", text)
+        self.assertIn("192.168.1.1  box1.lan  AA-BB-CC-DD-EE-FF  12", text)
+        self.assertIn("192.168.1.2  192.168.1.2  -  -", text)
+        self.assertIn("Free IPs: 192.168.1.3", text)
+        self.assertIn("Copied to clipboard", self.frame.status.text())
+
+    def test_copy_without_results_warns(self):
+        self.frame._copy_report()
+        self.assertIn("Nothing to copy", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Warn.TLabel")
+
+    # --- port scanner -------------------------------------------------
+    def test_port_bad_spec_error_no_thread(self):
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._host_entry.insert(0, "example.com")
+            self.frame._ports_entry.insert(0, "0-5")
+            self.frame._start_port()
+        fake_thread.assert_not_called()
+        self.assertIn("1-1024", self.frame.status.text())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Error.TLabel")
+
+    def test_port_done_fills_tree(self):
+        self.frame._set_port_busy(True)
+        self.frame._port_button.configure(
+            text="Stop", command=self.frame._stop_port)
+        self.frame._port_done({"open": [(22, "ssh")], "scanned": 10})
+        rows = self.frame._ports_tree.get_children()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            tuple(self.frame._ports_tree.item(rows[0], "values")),
+            ("22", "ssh"))
+        self.assertIn("1 open ports in 10 scanned.",
+                      self.frame.status.text())
+        self.assertEqual(str(self.frame._port_button.cget("text")), "Scan")
+        self.assertEqual(str(self.frame._host_entry.cget("state")),
+                         "normal")
+        self.assertEqual(str(self.frame._ports_entry.cget("state")),
+                         "normal")
+
+    def test_port_done_with_nothing_open_says_so(self):
+        self.frame._port_done({"open": [], "scanned": 5})
+        self.assertEqual(self.frame._ports_tree.get_children(), ())
+        self.assertIn("No open ports found.", self.frame.status.text())
+
+    def test_port_host_empty_warns(self):
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._ports_entry.insert(0, "22,80")
+            self.frame._start_port()
+        fake_thread.assert_not_called()
+        self.assertIn("host", self.frame.status.text().lower())
+        self.assertEqual(str(self.frame.status._label.cget("style")),
+                         "Warn.TLabel")
+
+    # --- section independence & layout --------------------------------
+    def test_sections_independent(self):
+        # A running block sweep leaves the port section fully usable.
+        self._start_sweep()
+        for widget in (self.frame._host_entry, self.frame._ports_entry):
+            self.assertEqual(str(widget.cget("state")), "normal")
+        self.assertEqual(str(self.frame._port_button.cget("text")), "Scan")
+        self.assertEqual(str(self.frame._port_button.cget("state")),
+                         "normal")
+        # Finish the sweep, then run a port scan: the block section
+        # stays usable while the port section manages its own inputs.
+        self.frame._sweep_done({"hosts": [], "free": [], "scanned": 254})
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._host_entry.insert(0, "example.com")
+            self.frame._ports_entry.insert(0, "22,80")
+            self.frame._start_port()
+        fake_thread.assert_called_once()
+        self.assertEqual(str(self.frame._host_entry.cget("state")),
+                         "disabled")
+        self.assertEqual(str(self.frame._block_entry.cget("state")),
+                         "normal")
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
+        self.assertEqual(str(self.frame._sweep_button.cget("state")),
+                         "normal")
+
+    def test_layout_columns_match_spec(self):
+        for column, width, heading in (("ip", 110, "IP"),
+                                       ("hostname", 230, "Hostname"),
+                                       ("mac", 130, "MAC"),
+                                       ("ms", 70, "Ping ms")):
+            self.assertEqual(self.frame._hosts_tree.column(column, "width"),
+                             width)
+            self.assertEqual(self.frame._hosts_tree.heading(column, "text"),
+                             heading)
+        for column, width in (("port", 90), ("service", 180)):
+            self.assertEqual(self.frame._ports_tree.column(column, "width"),
+                             width)
+        self.assertEqual(str(self.frame._sweep_button.cget("text")), "Scan")
+        self.assertEqual(str(self.frame._copy_button.cget("state")),
+                         "disabled")
+
+    def test_create_returns_frame(self):
+        frame = ip_scanner.create(self.root)
+        self.assertIsInstance(frame, ip_scanner.IPScannerFrame)
 
 
 if __name__ == "__main__":

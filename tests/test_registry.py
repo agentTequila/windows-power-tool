@@ -11,6 +11,7 @@ EXPECTED_KEYS = [
 
 EXPECTED_ADMIN = [
     "power_tool.tools.network",
+    "power_tool.tools.ip_scanner",
     "power_tool.tools.console",
     "power_tool.tools.installed_apps",
     "power_tool.tools.users_groups",
@@ -49,7 +50,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_admin_labels_are_human_readable(self):
         labels = [label for label, _ in REGISTRY[1][1]]
-        self.assertEqual(labels, ["Network", "Console",
+        self.assertEqual(labels, ["Network", "IP Scanner", "Console",
                                   "Installed Apps", "Users & Groups",
                                   "Processes", "Services"])
 

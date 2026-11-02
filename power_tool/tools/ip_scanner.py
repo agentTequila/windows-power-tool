@@ -1,10 +1,10 @@
-"""IP/port scanner pure layer: CIDR parsing, threaded sweep, ARP merge,
-TCP connect scan.
+"""IP/port scanner: CIDR parsing, threaded sweep, ARP merge, TCP
+connect scan, plus the IP Scanner tab frame.
 
-No tkinter here — the UI feeds addresses/ports in, gets sentinel-tagged
-messages out via `put`, and can stop early through `stop_event`.
-Nothing raises: unexpected failures surface as an ("error", ...)
-sentinel instead of an exception.
+The pure layer never raises: unexpected failures surface as an
+("error", ...) sentinel instead of an exception. The frame feeds
+addresses/ports in, gets sentinel-tagged messages out via `put`, and
+can stop early through `stop_event`.
 """
 
 import ipaddress
@@ -13,8 +13,10 @@ import re
 import socket
 import threading
 import time
+import tkinter as tk
+from tkinter import ttk
 
-from power_tool.core import runner
+from power_tool.core import runner, theme, widgets
 
 MAX_ADDRESSES = 4096
 
@@ -323,3 +325,315 @@ def run_port_scan(host: str, ports: list[int], stop_event, put,
         emit_terminal(("done", {"open": open_ports, "scanned": scanned}))
     except BaseException as exc:  # never raise out of run_port_scan
         emit_terminal(("error", str(exc)))
+
+
+class IPScannerFrame(ttk.Frame):
+    """IP block sweep + port scanner, each section independent.
+
+    Both sections follow network.py's proven pattern: a worker thread
+    `put`s sentinels into a private queue, the frame drains it via
+    `self.after(100, ...)`, and a `threading.Event` requests an early
+    stop. Terminal handlers re-enable FIRST so the UI never wedges.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent, padding=16)
+        self._sweep_queue: queue.Queue = queue.Queue()
+        self._sweep_stop: threading.Event | None = None
+        self._sweep_total: int | None = None
+        self._port_queue: queue.Queue = queue.Queue()
+        self._port_stop: threading.Event | None = None
+        self._report = ""
+
+        ttk.Label(self, text="IP Scanner",
+                  style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            self, wraplength=660, style="Dim.TLabel",
+            text="Hand it a block like 192.168.1.0/24 and it checks "
+                 "every address, listing the devices that answer with "
+                 "their name, MAC address and ping time — plus which "
+                 "addresses are still free. The Port scanner below "
+                 "probes a single host to see which services are "
+                 "open to the network.",
+        ).pack(anchor="w", pady=(6, 12))
+
+        block_section = ttk.LabelFrame(self, text="IP block scan",
+                                       padding=10)
+        block_section.pack(fill="x", pady=(0, 10))
+        sweep_row = ttk.Frame(block_section)
+        sweep_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(sweep_row, text="Block:").pack(side="left")
+        self._block_entry = ttk.Entry(sweep_row, width=22)
+        self._block_entry.pack(side="left", padx=8)
+        self._sweep_button = ttk.Button(
+            sweep_row, text="Scan", style="Accent.TButton",
+            command=self._start_sweep)
+        self._sweep_button.pack(side="left", padx=(0, 8))
+        self._sweep_progress = ttk.Progressbar(sweep_row, mode="determinate",
+                                               length=160)
+        self._sweep_progress.pack(side="left", padx=(0, 8))
+        self._copy_button = ttk.Button(
+            sweep_row, text="Copy report", state="disabled",
+            command=self._copy_report)
+        self._copy_button.pack(side="left")
+
+        self._hosts_tree = ttk.Treeview(
+            block_section, columns=("ip", "hostname", "mac", "ms"),
+            show="headings", height=6)
+        for column, width, heading in (("ip", 110, "IP"),
+                                       ("hostname", 230, "Hostname"),
+                                       ("mac", 130, "MAC"),
+                                       ("ms", 70, "Ping ms")):
+            self._hosts_tree.heading(column, text=heading)
+            self._hosts_tree.column(column, width=width, anchor="w")
+        self._hosts_tree.pack(fill="x", pady=(0, 6))
+
+        free_row = ttk.Frame(block_section)
+        free_row.pack(fill="x")
+        ttk.Label(free_row, text="Free IPs:").pack(side="left")
+        self._free_count = ttk.Label(free_row, style="Dim.TLabel",
+                                     text="0 free of 0")
+        self._free_count.pack(side="left", padx=8)
+        palette = theme.current_palette()
+        self._free_text = tk.Text(
+            block_section, wrap="word", height=3, font=("Consolas", 10),
+            bg=palette["entry_bg"], fg=palette["fg"],
+            insertbackground=palette["fg"], relief="flat", padx=10, pady=6,
+            state="disabled")
+        self._free_text.pack(fill="x", pady=(6, 0))
+        theme.observe(self._on_theme)
+
+        port_section = ttk.LabelFrame(self, text="Port scanner", padding=10)
+        port_section.pack(fill="x", pady=(0, 10))
+        port_row = ttk.Frame(port_section)
+        port_row.pack(fill="x", pady=(0, 6))
+        ttk.Label(port_row, text="Host:").pack(side="left")
+        self._host_entry = ttk.Entry(port_row, width=18)
+        self._host_entry.pack(side="left", padx=(4, 12))
+        ttk.Label(port_row, text="Ports:").pack(side="left")
+        self._ports_entry = ttk.Entry(port_row, width=14)
+        self._ports_entry.pack(side="left", padx=(4, 8))
+        self._port_button = ttk.Button(
+            port_row, text="Scan", style="Accent.TButton",
+            command=self._start_port)
+        self._port_button.pack(side="left", padx=(0, 8))
+        self._port_progress = ttk.Progressbar(port_row, mode="determinate",
+                                              length=160)
+        self._port_progress.pack(side="left")
+
+        self._ports_tree = ttk.Treeview(
+            port_section, columns=("port", "service"), show="headings",
+            height=5)
+        for column, width, heading in (("port", 90, "Port"),
+                                       ("service", 180, "Service")):
+            self._ports_tree.heading(column, text=heading)
+            self._ports_tree.column(column, width=width, anchor="w")
+        self._ports_tree.pack(fill="x")
+
+        self.status = widgets.StatusPane(self)
+        self.status.pack(fill="x", pady=(10, 0))
+
+    # --- theming ------------------------------------------------------
+    def _on_theme(self, palette: dict) -> None:
+        self._free_text.configure(bg=palette["entry_bg"], fg=palette["fg"],
+                                  insertbackground=palette["fg"])
+
+    # --- block sweep --------------------------------------------------
+    def _set_sweep_busy(self, busy: bool) -> None:
+        # Per-section: the port scanner never follows this state.
+        self._block_entry.configure(
+            state="disabled" if busy else "normal")
+
+    def _start_sweep(self) -> None:
+        try:
+            addresses = parse_block(self._block_entry.get())
+        except ValueError as exc:
+            self.status.set_error(str(exc))  # bad input ⇒ no thread
+            return
+        self._sweep_queue = queue.Queue()
+        self._sweep_stop = threading.Event()
+        self._sweep_total = len(addresses)
+        self._set_sweep_busy(True)
+        self._sweep_button.configure(text="Stop", command=self._stop_sweep)
+        self._sweep_progress.configure(maximum=len(addresses), value=0)
+        self._copy_button.configure(state="disabled")
+        self._clear_sweep_results()
+        self.status.set_working(f"Sweeping {len(addresses)} addresses…")
+        threading.Thread(
+            target=run_sweep,
+            args=(addresses, self._sweep_stop, self._sweep_queue.put),
+            daemon=True).start()
+        self.after(100, self._drain_sweep)
+
+    def _stop_sweep(self) -> None:
+        # Only requests the stop; the UI flips back when the worker's
+        # terminal sentinel arrives, mirroring network's ping toggle.
+        if self._sweep_stop is not None:
+            self._sweep_stop.set()
+        self.status.set_working(
+            "Stopping — waiting for the probes in flight…")
+
+    def _clear_sweep_results(self) -> None:
+        self._hosts_tree.delete(*self._hosts_tree.get_children())
+        self._free_count.configure(text="0 free of 0")
+        self._free_text.configure(state="normal")
+        self._free_text.delete("1.0", "end")
+        self._free_text.configure(state="disabled")
+        self._report = ""
+
+    def _drain_sweep(self) -> None:
+        finalized = False
+        for _ in range(50):
+            try:
+                item = self._sweep_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind = item[0]
+            if kind == "progress":
+                done, total = int(item[1]), int(item[2])
+                self._sweep_progress.configure(value=done)
+                self.status.set_working(f"Scanning… {done}/{total}")
+            elif kind == "done":
+                self._sweep_done(item[1])
+                finalized = True
+            elif kind == "error":
+                self._sweep_error(item[1])
+                finalized = True
+        if not finalized:
+            self.after(100, self._drain_sweep)
+
+    def _sweep_done(self, payload: dict) -> None:
+        self._set_sweep_busy(False)  # re-enable FIRST so the UI never wedges
+        self._sweep_button.configure(text="Scan", command=self._start_sweep)
+        hosts = payload.get("hosts", [])
+        free = payload.get("free", [])
+        scanned = int(payload.get("scanned", 0))
+        self._hosts_tree.delete(*self._hosts_tree.get_children())
+        for host in hosts:
+            ms = host.get("ms")
+            self._hosts_tree.insert("", "end", values=(
+                host.get("ip", ""), host.get("hostname") or "-",
+                host.get("mac") or "-",
+                "-" if ms is None else ms))
+        self._free_count.configure(
+            text=f"{len(free)} free of {scanned + len(free)}")
+        self._free_text.configure(state="normal")
+        self._free_text.delete("1.0", "end")
+        self._free_text.insert("1.0", ", ".join(free))
+        self._free_text.configure(state="disabled")
+        self._report = self._build_report(hosts, free)
+        self._copy_button.configure(state="normal")
+        total = self._sweep_total
+        if total is not None and scanned < total:
+            # Stopped early: the unprobed addresses are NOT verified
+            # free, so say how much was actually checked.
+            self.status.set_success(
+                f"Stopped early — {scanned} of {total} checked.")
+        else:
+            self.status.set_success(
+                f"Scan finished. {len(hosts)} hosts live, {len(free)} free.")
+
+    def _sweep_error(self, message: str) -> None:
+        self._set_sweep_busy(False)  # re-enable FIRST so the UI never wedges
+        self._sweep_button.configure(text="Scan", command=self._start_sweep)
+        self.status.set_error(str(message))
+
+    @staticmethod
+    def _build_report(hosts: list, free: list) -> str:
+        lines = ["IP  Hostname  MAC  Ping ms"]
+        for host in hosts:
+            ms = host.get("ms")
+            lines.append(f"{host.get('ip', '')}  "
+                         f"{host.get('hostname') or '-'}  "
+                         f"{host.get('mac') or '-'}  "
+                         f"{'-' if ms is None else ms}")
+        lines.append("Free IPs: " + ", ".join(free))
+        return "\n".join(lines)
+
+    def _copy_report(self) -> None:
+        if not self._report:
+            self.status.set_warn("Nothing to copy yet.")
+            return
+        widgets.copy_text(self, self._report)
+        self.status.set_success("Copied to clipboard.")
+
+    # --- port scanner -------------------------------------------------
+    def _set_port_busy(self, busy: bool) -> None:
+        # Per-section: the block sweep never follows this state.
+        state = "disabled" if busy else "normal"
+        self._host_entry.configure(state=state)
+        self._ports_entry.configure(state=state)
+
+    def _start_port(self) -> None:
+        try:
+            ports = parse_port_spec(self._ports_entry.get())
+        except ValueError as exc:
+            self.status.set_error(str(exc))  # bad input ⇒ no thread
+            return
+        host = self._host_entry.get().strip()
+        if not host:
+            self.status.set_warn("Enter a host name or IP address to scan.")
+            return
+        self._port_queue = queue.Queue()
+        self._port_stop = threading.Event()
+        self._set_port_busy(True)
+        self._port_button.configure(text="Stop", command=self._stop_port)
+        self._port_progress.configure(maximum=len(ports), value=0)
+        self._ports_tree.delete(*self._ports_tree.get_children())
+        self.status.set_working(f"Scanning {host} for {len(ports)} ports…")
+        threading.Thread(
+            target=run_port_scan,
+            args=(host, ports, self._port_stop, self._port_queue.put),
+            daemon=True).start()
+        self.after(100, self._drain_port)
+
+    def _stop_port(self) -> None:
+        # Only requests the stop; the UI flips back on the sentinel.
+        if self._port_stop is not None:
+            self._port_stop.set()
+        self.status.set_working(
+            "Stopping — waiting for the connections in flight…")
+
+    def _drain_port(self) -> None:
+        finalized = False
+        for _ in range(50):
+            try:
+                item = self._port_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind = item[0]
+            if kind == "progress":
+                done, total = int(item[1]), int(item[2])
+                self._port_progress.configure(value=done)
+                self.status.set_working(f"Scanning ports… {done}/{total}")
+            elif kind == "done":
+                self._port_done(item[1])
+                finalized = True
+            elif kind == "error":
+                self._port_error(item[1])
+                finalized = True
+        if not finalized:
+            self.after(100, self._drain_port)
+
+    def _port_done(self, payload: dict) -> None:
+        self._set_port_busy(False)  # re-enable FIRST so the UI never wedges
+        self._port_button.configure(text="Scan", command=self._start_port)
+        open_ports = payload.get("open", [])
+        scanned = int(payload.get("scanned", 0))
+        self._ports_tree.delete(*self._ports_tree.get_children())
+        for port, service in open_ports:
+            self._ports_tree.insert("", "end", values=(str(port), service))
+        if open_ports:
+            self.status.set_success(
+                f"{len(open_ports)} open ports in {scanned} scanned.")
+        else:
+            self.status.set_success("No open ports found.")
+
+    def _port_error(self, message: str) -> None:
+        self._set_port_busy(False)  # re-enable FIRST so the UI never wedges
+        self._port_button.configure(text="Scan", command=self._start_port)
+        self.status.set_error(str(message))
+
+
+def create(parent: ttk.Frame) -> ttk.Frame:
+    return IPScannerFrame(parent)
