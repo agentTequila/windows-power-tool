@@ -1,6 +1,6 @@
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 from power_tool.core import runner
 from power_tool.tools import ip_scanner
@@ -232,6 +232,176 @@ class RunSweepTests(unittest.TestCase):
             messages = self._sweep(ADDRESSES, threading.Event())
         self.assertGreaterEqual(fake_thread.call_count, 1)
         self.assertEqual(len([m for m in messages if m[0] == "done"]), 1)
+
+
+class ParsePortSpecTests(unittest.TestCase):
+    def test_range(self):
+        ports = ip_scanner.parse_port_spec("1-1024")
+        self.assertEqual(len(ports), 1024)
+        self.assertEqual(ports[0], 1)
+        self.assertEqual(ports[-1], 1024)
+
+    def test_list(self):
+        self.assertEqual(ip_scanner.parse_port_spec("443,22,8080"),
+                         [22, 443, 8080])
+
+    def test_mixed(self):
+        self.assertEqual(ip_scanner.parse_port_spec("22,8000-8002"),
+                         [22, 8000, 8001, 8002])
+
+    def test_dedupe(self):
+        self.assertEqual(ip_scanner.parse_port_spec("80,80-82"),
+                         [80, 81, 82])
+
+    def test_bad_values(self):
+        for bad in ("", "0", "abc", "100-50", "65536", "22-", "-5"):
+            with self.assertRaises(ValueError) as ctx:
+                ip_scanner.parse_port_spec(bad)
+            self.assertIn("1-1024", str(ctx.exception))
+
+    def test_over_cap(self):
+        self.assertEqual(ip_scanner.MAX_PORTS, 4096)
+        with self.assertRaises(ValueError) as ctx:
+            ip_scanner.parse_port_spec("1-5000")
+        self.assertIn("4096", str(ctx.exception))
+
+
+class PortServiceTests(unittest.TestCase):
+    def test_known(self):
+        self.assertEqual(ip_scanner.port_service(80), "http")
+
+    def test_unknown(self):
+        with patch.object(ip_scanner.socket, "getservbyport",
+                          side_effect=OSError("noPE")):
+            self.assertEqual(ip_scanner.port_service(9), "-")
+
+
+HOST = "192.168.1.7"
+SCAN_PORTS = [22, 80, 443]
+
+
+def fake_addrinfo(address, _port=None):
+    return [(2, 1, 6, "", ("127.0.0.1", 0))]
+
+
+class FakeSocket:
+    closed_count = 0
+
+    def close(self):
+        FakeSocket.closed_count += 1
+        self.closed = True
+
+
+def fake_getserv(port, proto=None):
+    if port == 22:
+        return "ssh"
+    if port == 80:
+        return "http"
+    raise OSError("noPE")
+
+
+def make_connector(open_ports):
+    calls = []
+
+    def connector(address, timeout=0.4):
+        calls.append((address, timeout))
+        if address[1] in open_ports:
+            return FakeSocket() if address[1] == 22 else None
+        raise OSError("refused")
+
+    connector.calls = calls
+    return connector
+
+
+class RunPortScanTests(unittest.TestCase):
+    def _scan(self, ports, stop, connector, workers=64):
+        messages = []
+        with patch.object(ip_scanner.socket, "getaddrinfo", fake_addrinfo):
+            ip_scanner.run_port_scan(HOST, ports, stop, messages.append,
+                                     workers=workers, connector=connector)
+        return messages
+
+    @staticmethod
+    def _done(messages):
+        done = [m for m in messages if m[0] == "done"]
+        return done[0][1] if done else None
+
+    def test_open_listed_with_service(self):
+        connector = make_connector({22, 80})
+        with patch.object(ip_scanner.socket, "getservbyport", fake_getserv):
+            messages = self._scan(SCAN_PORTS, threading.Event(), connector)
+        payload = self._done(messages)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["open"], [(22, "ssh"), (80, "http")])
+        self.assertEqual(payload["scanned"], len(SCAN_PORTS))
+
+    def test_open_sockets_closed(self):
+        connector = make_connector({22, 80})
+        FakeSocket.closed_count = 0
+        with patch.object(ip_scanner.socket, "getservbyport", fake_getserv):
+            self._scan(SCAN_PORTS, threading.Event(), connector)
+        # One FakeSocket was handed out (port 22) and it got closed; the
+        # None-returning fake (port 80) was skipped via the hasattr check.
+        self.assertEqual(FakeSocket.closed_count, 1)
+        self.assertEqual(len(connector.calls), len(SCAN_PORTS))
+
+    def test_stop_short_circuits(self):
+        stop = threading.Event()
+        stop.set()
+        connector = Mock()
+        messages = self._scan(SCAN_PORTS, stop, connector)
+        self.assertEqual(connector.call_args_list, [])
+        self.assertEqual([m for m in messages if m[0] == "progress"], [])
+        payload = self._done(messages)
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["open"], [])
+        self.assertEqual(payload["scanned"], 0)
+
+    def test_unresolvable_host_error_sentinel(self):
+        connector = Mock()
+        messages = []
+        with patch.object(ip_scanner.socket, "getaddrinfo",
+                          side_effect=ip_scanner.socket.gaierror(2, "noPE")):
+            ip_scanner.run_port_scan(HOST, SCAN_PORTS, threading.Event(),
+                                     messages.append, connector=connector)
+        kinds = [m[0] for m in messages]
+        self.assertEqual(kinds, ["error"])
+        self.assertIn(HOST, messages[0][1])
+        self.assertEqual(connector.call_args_list, [])
+
+    def test_connector_exception_becomes_error_sentinel(self):
+        connector = MagicMock(side_effect=RuntimeError("kaboom"))
+        messages = self._scan(SCAN_PORTS, threading.Event(), connector)
+        kinds = [m[0] for m in messages]
+        self.assertIn("error", kinds)
+        self.assertNotIn("done", kinds)
+        errors = [m for m in messages if m[0] == "error"]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("kaboom", errors[0][1])
+
+    def test_progress_and_done_once(self):
+        connector = make_connector({22})
+        messages = self._scan(SCAN_PORTS, threading.Event(), connector)
+        kinds = [m[0] for m in messages]
+        progress = [m for m in messages if m[0] == "progress"]
+        self.assertEqual(kinds.count("done"), 1)
+        self.assertNotIn("error", kinds)
+        self.assertEqual(len(progress), len(SCAN_PORTS))
+        self.assertEqual(sorted(m[1] for m in progress),
+                         [1, 2, len(SCAN_PORTS)])
+        self.assertTrue(all(m[2] == len(SCAN_PORTS) for m in progress))
+        self.assertEqual(messages[-1][0], "done")
+
+    def test_connector_uses_timeout(self):
+        connector = make_connector({22})
+        self._scan(SCAN_PORTS, threading.Event(), connector)
+        # Every port is attempted (closed ports raise OSError inside the
+        # fake), pulled from the queue in whatever order the workers
+        # raced — the seam contract is timeout=0.4 on every call.
+        by_port = {address[1]: timeout for address, timeout in connector.calls}
+        self.assertEqual(sorted(by_port), SCAN_PORTS)
+        for timeout in by_port.values():
+            self.assertEqual(timeout, 0.4)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
-"""IP block scanner pure layer: CIDR parsing, threaded sweep, ARP merge.
+"""IP/port scanner pure layer: CIDR parsing, threaded sweep, ARP merge,
+TCP connect scan.
 
-No tkinter here — the UI feeds addresses in, gets sentinel-tagged
+No tkinter here — the UI feeds addresses/ports in, gets sentinel-tagged
 messages out via `put`, and can stop early through `stop_event`.
 Nothing raises: unexpected failures surface as an ("error", ...)
 sentinel instead of an exception.
@@ -176,4 +177,149 @@ def run_sweep(addresses: list[str], stop_event, put, workers: int = 64,
         emit_terminal(("done", {"hosts": hosts, "free": free,
                                 "scanned": scanned}))
     except BaseException as exc:  # never raise out of run_sweep
+        emit_terminal(("error", str(exc)))
+
+
+MAX_PORTS = 4096
+
+_PORT_SPEC_HINT = "Enter ports like 1-1024 or 22,80,443"
+_PORT_CAP_HINT = (f"That's more than {MAX_PORTS} ports — scan a smaller "
+                  "range.")
+
+
+def parse_port_spec(text: str) -> list[int]:
+    """Expand "22,80,443" / "1-1024" spec text into a sorted port list.
+
+    Values must be 1-65535, range starts may not exceed their ends, and
+    the total after de-duplication must fit within `MAX_PORTS`. Anything
+    else — blanks, junk tokens, inverted ranges, over-cap — raises
+    ValueError with a fixable-sounding hint.
+    """
+    seen: set[int] = set()
+    for raw_token in str(text).split(","):
+        token = raw_token.strip()
+        try:
+            if "-" in token:
+                start_s, _sep, end_s = token.partition("-")
+                start, end = int(start_s), int(end_s)
+                if not 1 <= start <= end <= 65535:
+                    raise ValueError
+                seen.update(range(start, end + 1))
+            else:
+                port = int(token)
+                if not 1 <= port <= 65535:
+                    raise ValueError
+                seen.add(port)
+        except ValueError as exc:
+            raise ValueError(_PORT_SPEC_HINT) from exc
+    ports = sorted(seen)
+    if len(ports) > MAX_PORTS:
+        raise ValueError(_PORT_CAP_HINT)
+    return ports
+
+
+def port_service(port: int) -> str:
+    """Well-known TCP service name for `port`, or "-" when unnamed."""
+    try:
+        return socket.getservbyport(port, "tcp")
+    except OSError:
+        return "-"
+
+
+def run_port_scan(host: str, ports: list[int], stop_event, put,
+                  workers: int = 64, connector=None) -> None:
+    """TCP connect-scan `ports` on `host` with up to `workers` threads.
+
+    Never raises. Emits ("progress", done, total) per attempted port and
+    exactly one terminal sentinel: ("done", payload) on completion or
+    early stop, ("error", str(exc)) if the host will not resolve or a
+    connector failure is anything other than a closed port (refused,
+    timed out, unreachable, ...). Payload: open = sorted (port, service)
+    pairs, scanned = ports attempted. `connector` is a test seam.
+    """
+    connector = socket.create_connection if connector is None else connector
+
+    try:
+        # Resolve up front so an unusable host fails fast with a clear
+        # message instead of surfacing as a per-port gaierror.
+        try:
+            socket.getaddrinfo(host, None)
+        except OSError:
+            put(("error", f"Cannot resolve {host}."))
+            return
+    except BaseException as exc:  # never raise out of run_port_scan
+        put(("error", str(exc)))
+        return
+
+    lock = threading.Lock()
+    state = {"done": 0, "open": {}, "failure": None, "emitted": False}
+    abort = threading.Event()
+
+    def emit_terminal(message) -> None:
+        # Lock-guarded flag: exactly one terminal sentinel, even when a
+        # stop races completion or a failure lands mid-scan.
+        with lock:
+            if state["emitted"]:
+                return
+            state["emitted"] = True
+        put(message)
+
+    def worker() -> None:
+        while not abort.is_set() and not stop_event.is_set():
+            try:
+                port = work.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                sock = connector((host, port), timeout=0.4)
+            except OSError:
+                # Refused / timed out / unreachable: closed port, and a
+                # normal scan result rather than a failure.
+                with lock:
+                    state["done"] += 1
+                    done, total = state["done"], total_count
+                put(("progress", done, total))
+                continue
+            except BaseException as exc:  # never raise out of a worker
+                with lock:
+                    if state["failure"] is None:
+                        state["failure"] = exc
+                abort.set()
+                return
+            try:
+                with lock:
+                    state["open"][port] = port_service(port)
+                    state["done"] += 1
+                    done, total = state["done"], total_count
+            finally:
+                # Fakes may return None or a bare Mock, so only close
+                # what actually looks like a socket.
+                if hasattr(sock, "close"):
+                    sock.close()
+            put(("progress", done, total))
+
+    try:
+        total_count = len(ports)
+        work: queue.Queue = queue.Queue()
+        for port in ports:
+            work.put(port)
+        pool = [
+            threading.Thread(target=worker, daemon=True)
+            for _ in range(min(max(workers, 1), total_count))
+        ]
+        for thread in pool:
+            thread.start()
+        for thread in pool:
+            thread.join()
+
+        with lock:
+            failure = state["failure"]
+            open_ports = sorted(state["open"].items())
+            scanned = state["done"]
+
+        if failure is not None:
+            emit_terminal(("error", str(failure)))
+            return
+        emit_terminal(("done", {"open": open_ports, "scanned": scanned}))
+    except BaseException as exc:  # never raise out of run_port_scan
         emit_terminal(("error", str(exc)))
