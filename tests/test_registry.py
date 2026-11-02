@@ -27,6 +27,10 @@ EXPECTED_SYSTEM = [
 
 
 class RegistryTests(unittest.TestCase):
+    def test_registry_has_fourteen_tools_in_three_groups(self):
+        self.assertEqual(len(REGISTRY), 3)
+        self.assertEqual(sum(len(modules) for _, modules in REGISTRY), 14)
+
     def test_core_group_lists_four_tools_in_order(self):
         self.assertEqual(REGISTRY[0][0], "Core")
         keys = [module.__name__ for _, module in REGISTRY[0][1]]
