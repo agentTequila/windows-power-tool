@@ -12,7 +12,9 @@ Get **WindowsPowerTool.exe** from the [latest release](https://github.com/agentT
 
 > **SmartScreen:** the exe is unsigned, so Windows may show "Windows protected your PC". Click **More info → Run anyway**.
 
-## What's new in 1.4.0
+## What's new in 1.4.x
+
+**1.4.1** accepts a trailing dot on IPs and hostnames in the port scanner, and uses full black/white button text for better contrast.
 
 - **IP Scanner** — sweep a block, see every host with its name, MAC and ping time, get the addresses that are still free, and port-scan a single machine.
 - **Add User** — create a local account from Users & Groups, with the exact commands shown before anything runs and the password kept out of the preview.
