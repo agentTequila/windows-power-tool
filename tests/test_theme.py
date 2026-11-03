@@ -88,6 +88,28 @@ class StyleAppearanceTests(unittest.TestCase):
             style.lookup("TCheckbutton", "background", ["active"]),
             theme.PALETTES["dark"]["panel2"])
 
+    def test_button_labels_are_full_black_or_white(self):
+        for theme_name in ("dark", "light"):
+            with self.subTest(theme=theme_name):
+                theme.apply_theme(self.root, theme_name)
+                style = ttk.Style(self.root)
+                palette = theme.PALETTES[theme_name]
+                for name in ("TButton", "Sidebar.TButton",
+                             "Ghost.TButton"):
+                    self.assertEqual(
+                        style.lookup(name, "foreground"), palette["fg"])
+                for name in ("TButton", "Accent.TButton",
+                             "Danger.TButton"):
+                    self.assertEqual(
+                        style.lookup(name, "foreground", ["disabled"]),
+                        palette["fg"])
+                    self.assertEqual(
+                        style.lookup(name, "background", ["disabled"]),
+                        palette["bg"])
+                self.assertEqual(
+                    style.lookup("TNotebook.Tab", "foreground"),
+                    palette["fg"])
+
     def test_light_hover_background_light_with_dark_text(self):
         theme.apply_theme(self.root, "light")
         style = ttk.Style(self.root)

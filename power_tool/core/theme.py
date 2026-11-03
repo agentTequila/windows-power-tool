@@ -183,9 +183,9 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.map("Accent.TButton",
               background=[("active", _shade(p["accent"], 0.86)),
                           ("pressed", _shade(p["accent"], 0.78)),
-                          ("disabled", p["panel2"])],
+                          ("disabled", p["bg"])],
               foreground=[("active", p["accent_fg"]),
-                          ("disabled", p["dim"])])
+                          ("disabled", p["fg"])])
     style.configure("Danger.TButton", background=p["danger"],
                     foreground=p["accent_fg"], padding=(14, 7),
                     font=(FONT, 9, "bold"), borderwidth=0, focusthickness=0,
@@ -193,16 +193,17 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
     style.map("Danger.TButton",
               background=[("active", _shade(p["danger"], 0.86)),
                           ("pressed", _shade(p["danger"], 0.78)),
-                          ("disabled", p["panel2"])],
+                          ("disabled", p["bg"])],
               foreground=[("active", p["accent_fg"]),
-                          ("disabled", p["dim"])])
+                          ("disabled", p["fg"])])
     style.configure("TButton", background=p["panel2"], foreground=p["fg"],
                     padding=(12, 6), font=(FONT, 9), borderwidth=0,
                     focusthickness=0, relief="flat")
     style.map("TButton",
               background=[("active", _shade(p["panel2"], 1.16)),
-                          ("pressed", _shade(p["panel2"], 0.9))],
-              foreground=[("active", p["fg"]), ("disabled", p["dim"])])
+                          ("pressed", _shade(p["panel2"], 0.9)),
+                          ("disabled", p["bg"])],
+              foreground=[("active", p["fg"]), ("disabled", p["fg"])])
     style.configure("Ghost.TButton", background=p["panel"],
                     foreground=p["fg"], padding=(10, 6), font=(FONT, 9),
                     borderwidth=0, focusthickness=0, relief="flat")
@@ -252,7 +253,7 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
                     bordercolor=p["border"], lightcolor=p["border"],
                     darkcolor=p["border"], borderwidth=0, relief="flat")
     style.configure("TNotebook.Tab", background=p["panel2"],
-                    foreground=p["dim"], padding=(16, 8),
+                    foreground=p["fg"], padding=(16, 8),
                     font=(FONT, 9), borderwidth=0, relief="flat")
     style.map("TNotebook.Tab",
               background=[("selected", p["panel"]),
