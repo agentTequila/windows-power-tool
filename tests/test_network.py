@@ -19,6 +19,12 @@ class PingOnceArgsTests(unittest.TestCase):
         self.assertEqual(network.ping_once_args("  8.8.8.8  "),
                          ["ping", "-n", "1", "-w", "2000", "8.8.8.8"])
 
+    def test_trims_trailing_dot(self):
+        self.assertEqual(network.ping_once_args("8.8.8.8."),
+                         ["ping", "-n", "1", "-w", "2000", "8.8.8.8"])
+        self.assertEqual(network.ping_once_args("router.lan."),
+                         ["ping", "-n", "1", "-w", "2000", "router.lan"])
+
     def test_empty_host_raises(self):
         with self.assertRaises(ValueError):
             network.ping_once_args("   ")

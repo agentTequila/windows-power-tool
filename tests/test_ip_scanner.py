@@ -8,6 +8,20 @@ from power_tool.core import runner, theme
 from power_tool.tools import ip_scanner
 
 
+class NormalizeHostTests(unittest.TestCase):
+    def test_trailing_dot_is_trimmed_from_ip(self):
+        self.assertEqual(ip_scanner.normalize_host("192.168.1.1."),
+                         "192.168.1.1")
+
+    def test_trailing_dot_is_trimmed_from_hostname(self):
+        self.assertEqual(ip_scanner.normalize_host("  router.lan.  "),
+                         "router.lan")
+
+    def test_only_dots_fall_back_to_empty(self):
+        self.assertEqual(ip_scanner.normalize_host("..."), "")
+        self.assertEqual(ip_scanner.normalize_host(" . "), "")
+
+
 class ParseBlockTests(unittest.TestCase):
     def test_slash24_hosts_only(self):
         addrs = ip_scanner.parse_block("192.168.1.0/24")
@@ -35,6 +49,11 @@ class ParseBlockTests(unittest.TestCase):
     def test_slash32(self):
         self.assertEqual(ip_scanner.parse_block("10.0.0.9/32"),
                          ["10.0.0.9"])
+
+    def test_trailing_dot_is_accepted(self):
+        self.assertEqual(ip_scanner.parse_block("10.0.0.9."), ["10.0.0.9"])
+        addrs = ip_scanner.parse_block("192.168.1.0/30.")
+        self.assertEqual(addrs, ["192.168.1.1", "192.168.1.2"])
 
 
 ARP_SAMPLE = (
@@ -95,6 +114,11 @@ class ResolveHostTests(unittest.TestCase):
         with patch.object(ip_scanner.socket, "gethostbyaddr",
                           side_effect=OSError("no dns")):
             self.assertEqual(ip_scanner.resolve_host("1.2.3.4"), "1.2.3.4")
+
+    def test_dns_root_dot_is_trimmed_from_display_name(self):
+        with patch.object(ip_scanner.socket, "gethostbyaddr",
+                          return_value=("box.lan.", [], ["1.2.3.4"])):
+            self.assertEqual(ip_scanner.resolve_host("1.2.3.4"), "box.lan")
 
 
 ADDRESSES = ["192.168.1.1", "192.168.1.2", "192.168.1.3"]
@@ -376,6 +400,17 @@ class RunPortScanTests(unittest.TestCase):
         # None-returning fake (port 80) was skipped via the hasattr check.
         self.assertEqual(FakeSocket.closed_count, 1)
         self.assertEqual(len(connector.calls), len(SCAN_PORTS))
+
+    def test_trailing_dot_host_is_trimmed_before_resolving(self):
+        connector = make_connector({22})
+        messages = []
+        with patch.object(ip_scanner.socket, "getaddrinfo") as fake_info:
+            fake_info.return_value = fake_addrinfo(HOST)
+            ip_scanner.run_port_scan(
+                HOST + ".", [22], threading.Event(), messages.append,
+                connector=connector)
+        fake_info.assert_called_once_with(HOST, None)
+        self.assertEqual(connector.calls[0][0][0], HOST)
 
     def test_stop_short_circuits(self):
         stop = threading.Event()
@@ -710,6 +745,15 @@ class IPScannerFrameTests(unittest.TestCase):
         self.assertIn("host", self.frame.status.text().lower())
         self.assertEqual(str(self.frame.status._label.cget("style")),
                          "Warn.TLabel")
+
+    def test_port_host_trailing_dot_is_trimmed(self):
+        with patch.object(ip_scanner.threading, "Thread") as fake_thread:
+            self.frame._host_entry.insert(0, "192.168.1.7.")
+            self.frame._ports_entry.insert(0, "22")
+            self.frame._start_port()
+        args = fake_thread.call_args.kwargs["args"]
+        self.assertEqual(args[0], "192.168.1.7")
+        self.assertIn("Scanning 192.168.1.7", self.frame.status.text())
 
     # --- section independence & layout --------------------------------
     def test_sections_independent(self):

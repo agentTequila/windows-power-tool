@@ -17,7 +17,9 @@ ACTIONS = {
 
 
 def ping_once_args(host: str) -> list[str]:
-    cleaned = str(host).strip()
+    # A trailing dot is a DNS root marker, not part of the address; ping
+    # rejects it when someone pastes "router.lan." or "8.8.8.8.".
+    cleaned = str(host).strip().rstrip(".")
     if not cleaned:
         raise ValueError("host is empty")
     return ["ping", "-n", "1", "-w", "2000", cleaned]

@@ -28,13 +28,23 @@ _IPV4_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 _MAC_RE = re.compile(r"(?:[0-9a-fA-F]{2}[-:]){5}[0-9a-fA-F]{2}")
 
 
+def normalize_host(host: str) -> str:
+    """Trim whitespace and a DNS root dot from a host or block target.
+
+    People paste addresses copied from DNS output ("router.lan.") or type
+    a trailing dot by habit. Windows' resolver rejects "192.168.1.1." as
+    an address, so the tool accepts the dotted form too.
+    """
+    return str(host).strip().rstrip(".")
+
+
 def parse_block(text: str) -> list[str]:
     """Expand a single IPv4 address or CIDR block into usable hosts.
 
     Network/broadcast are excluded by `hosts()` (/31 and /32 keep every
     address). Over the cap, or anything non-IPv4, raises ValueError.
     """
-    cleaned = str(text).strip()
+    cleaned = normalize_host(text)
     try:
         network = ipaddress.ip_network(cleaned, strict=False)
     except ValueError as exc:
@@ -80,7 +90,8 @@ def ping_ms(ip: str) -> int | None:
 
 def resolve_host(ip: str) -> str:
     try:
-        return socket.gethostbyaddr(ip)[0]
+        hostname = socket.gethostbyaddr(ip)[0].rstrip(".")
+        return hostname or ip
     except OSError:
         return ip
 
@@ -250,14 +261,18 @@ def run_port_scan(host: str, ports: list[int], stop_event, put,
     pairs, scanned = ports attempted. `connector` is a test seam.
     """
     connector = socket.create_connection if connector is None else connector
+    host = normalize_host(host)
 
     try:
+        if not host:
+            put(("error", "Enter a host name or IP address."))
+            return
         # Resolve up front so an unusable host fails fast with a clear
         # message instead of surfacing as a per-port gaierror.
         try:
             socket.getaddrinfo(host, None)
         except OSError:
-            put(("error", f"Cannot resolve {host}."))
+            put(("error", f"Cannot resolve {host}"))
             return
     except BaseException as exc:  # never raise out of run_port_scan
         put(("error", str(exc)))
@@ -614,7 +629,7 @@ class IPScannerFrame(ttk.Frame):
         except ValueError as exc:
             self.status.set_error(str(exc))  # bad input ⇒ no thread
             return
-        host = self._host_entry.get().strip()
+        host = normalize_host(self._host_entry.get())
         if not host:
             self.status.set_warn("Enter a host name or IP address to scan.")
             return
