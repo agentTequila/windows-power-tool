@@ -8,13 +8,13 @@ from typing import Callable
 PALETTES = {
     "dark": {
         "bg": "#0f1116", "panel": "#161a22", "panel2": "#1f2531",
-        "fg": "#e8ebf2", "dim": "#8b94a7", "accent": "#5b8def",
+        "fg": "#ffffff", "dim": "#8b94a7", "accent": "#5b8def",
         "accent_fg": "#ffffff", "success": "#3ddc97", "danger": "#ff6b6b",
         "warn": "#f2b84b", "border": "#283040", "entry_bg": "#0b0e13",
     },
     "light": {
         "bg": "#f4f6fb", "panel": "#ffffff", "panel2": "#e9edf5",
-        "fg": "#131722", "dim": "#5c687c", "accent": "#2f6fed",
+        "fg": "#000000", "dim": "#5c687c", "accent": "#2f6fed",
         "accent_fg": "#ffffff", "success": "#12805c", "danger": "#c43d3d",
         "warn": "#9a6300", "border": "#d7dde9", "entry_bg": "#ffffff",
     },
@@ -182,7 +182,8 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
                     relief="flat")
     style.map("Accent.TButton",
               background=[("active", _shade(p["accent"], 0.86)),
-                          ("pressed", _shade(p["accent"], 0.78))],
+                          ("pressed", _shade(p["accent"], 0.78)),
+                          ("disabled", p["panel2"])],
               foreground=[("active", p["accent_fg"]),
                           ("disabled", p["dim"])])
     style.configure("Danger.TButton", background=p["danger"],
@@ -191,7 +192,8 @@ def apply_theme(root: tk.Misc, name: str) -> dict:
                     relief="flat")
     style.map("Danger.TButton",
               background=[("active", _shade(p["danger"], 0.86)),
-                          ("pressed", _shade(p["danger"], 0.78))],
+                          ("pressed", _shade(p["danger"], 0.78)),
+                          ("disabled", p["panel2"])],
               foreground=[("active", p["accent_fg"]),
                           ("disabled", p["dim"])])
     style.configure("TButton", background=p["panel2"], foreground=p["fg"],
